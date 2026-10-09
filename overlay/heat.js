@@ -193,33 +193,37 @@
   }
 
   // ---------- the sentence ----------
+  var FEW = 5; // under this many depth plays tonight: the numbers only, no judgement
   function yd(v) { return Math.abs(v).toFixed(1); }
   // depth at the throw: "19.2 yd" downfield, "5.2 yd behind the line" in the backfield
   function depthLong(v) { return yd(v) + ' yd' + (v < 0 ? ' behind the line' : ''); }
   function depthShort(v) { return yd(v) + (v < 0 ? ' behind' : ''); }
   function about(gap, unit) { var n = Math.max(1, Math.round(Math.abs(gap))); return 'about ' + n + ' ' + unit + (n === 1 ? '' : 's'); }
-  function moved(gap, baseDepth, def) {
-    if (baseDepth < 0) return gap < 0 ? 'farther behind the line' : 'closer to the line';
-    return gap > 0 ? (def ? 'deeper' : 'farther downfield') : (def ? 'shallower' : 'closer to the line');
+  // "closer to the line" only while both depths sit on the same side of it; across the line, field direction
+  function moved(gap, base, now, def) {
+    if (base < 0 && now < 0) return gap < 0 ? 'farther behind the line' : 'closer to the line';
+    if (base >= 0 && now >= 0 && !def) return gap > 0 ? 'farther downfield' : 'closer to the line';
+    if (def) return gap > 0 ? 'deeper' : 'shallower';
+    return gap > 0 ? 'farther downfield' : 'farther back';
   }
   function sentence(id, base, now) {
     var name = lastName(id), def = info[id].side === 'defense';
     var baseDepth = base && base.depthPlays && base.avgDepthAtEnd != null ? base.avgDepthAtEnd : null;
-    if (!now.snaps) {
-      return 'Not on the field yet tonight.' + (baseDepth != null ? ' Before tonight: ' + depthLong(baseDepth) + ' at the throw over ' + plural(base.depthPlays, 'play') + '.' : '');
-    }
+    var before = baseDepth != null ? depthShort(baseDepth) + ' over ' + plural(base.depthPlays, 'snap') : null;
+    if (!now.snaps) return 'Not on the field yet tonight.' + (before ? ' Before tonight: ' + depthLong(baseDepth) + ' at the throw over ' + plural(base.depthPlays, 'snap') + '.' : '');
     if (now.depth == null) return name + ' has ' + plural(now.snaps, 'snap') + ' tonight, none ending in a throw or sack yet.';
     var tonightPart = depthLong(now.depth) + ' at the throw over ' + plural(now.depthPlays, 'snap');
-    if (!base) return name + ': ' + tonightPart + ' tonight. No earlier games yet.';
-    if (baseDepth == null) return name + ': ' + tonightPart + ' tonight, with no throw or sack in earlier games to compare.';
+    if (!base) return name + ' tonight: ' + tonightPart + '. No earlier games yet.';
+    if (!before) return name + ' tonight: ' + tonightPart + ', with no throw or sack in earlier games to compare.';
+    if (now.depthPlays < FEW) return name + ' tonight: ' + tonightPart + ' (before: ' + before + ').';
     var gap = now.depth - baseDepth, same = Math.abs(gap) < SAME_YD;
-    var depthWords = same ? 'at his usual depth' : about(gap, 'yard') + ' ' + moved(gap, baseDepth, def) + ' than usual';
+    var depthWords = same ? 'at his usual depth' : 'sitting ' + about(gap, 'yard') + ' ' + moved(gap, baseDepth, now.depth, def) + ' than usual';
     var wNow = sideToSide(now.cells), wBase = sideToSide(base.cells), wide = '';
     if (wNow != null && wBase != null && Math.abs(wNow - wBase) >= SAME_YD) {
-      wide = (same ? ' but ' : ' and ') + about(wNow - wBase, 'yard') + ' ' + (wNow > wBase ? 'wider' : 'tighter');
+      wide = (same ? ', but ' : ', and ') + about(wNow - wBase, 'yard') + ' ' + (wNow > wBase ? 'wider of' : 'tighter to') +
+        ' the ball (' + yd(wNow) + ' vs ' + yd(wBase) + ' yd)';
     }
-    return name + ' is ' + (same ? '' : 'sitting ') + depthWords + wide + ' tonight: ' + tonightPart + ' vs ' + depthShort(baseDepth) + ' over ' + base.depthPlays + ' before' +
-      (wide ? '; ' + yd(wNow) + ' yd from the ball side to side vs ' + yd(wBase) : '') + '.';
+    return name + ' is ' + depthWords + ' tonight: ' + tonightPart + ' vs ' + before + ' before' + wide + '.';
   }
 
   // ---------- panel ----------
@@ -260,8 +264,8 @@
 
   // ---------- placement: on the left inside the safe margin, below the bar, beside or below the open pills ----------
   // Each candidate top (just below the bar, or just below an open pill) gets the widest maps that fit between the
-  // pills still beside it and the bottom chrome; the panel takes the candidate with the biggest maps. Only when no
-  // candidate fits does it sit below the bar over the pills.
+  // pills still beside it and the bottom chrome; the panel takes the candidate with the biggest maps. When none fits,
+  // it takes the smallest maps where it covers least of the pills.
   var MAP_MIN = 110, MAP_MAX = 230, GAP = 12;
   var mapW = 200;
   function rectOf(id) {
@@ -299,7 +303,22 @@
       var w = Math.min(MAP_MAX, Math.floor((lim - left - pad - GAP) / 2), Math.floor((bottom - t - chrome) / ASPECT));
       if (ok && w >= MAP_MIN && (!best || w > best.w)) best = { t: t, w: w };
     });
-    if (!best) best = { t: first, w: clamp(Math.floor((bottom - first - chrome) / ASPECT), MAP_MIN, MAP_MAX) };
+    if (!best) {
+      // no slot fits: the smallest maps, in the slot that covers least of the Duel pill (its Push button above all),
+      // then least of the other pills, kept above the bottom chrome
+      setMapW(MAP_MIN);
+      var h = panel.offsetHeight, pw = panel.offsetWidth, duel = document.getElementById('pill-duel');
+      var dr = duel && duel.classList.contains('open') ? duel.getBoundingClientRect() : null;
+      var cover = function (r, t) {
+        if (!r) return 0;
+        return Math.max(0, Math.min(left + pw, r.right) - Math.max(left, r.left)) * Math.max(0, Math.min(t + h, r.bottom) - Math.max(t, r.top));
+      };
+      tops.concat([bottom - h]).forEach(function (t0) {
+        var t = Math.max(first, Math.min(t0, bottom - h));
+        var d = cover(dr, t), all = pills.reduce(function (sum, r) { return sum + cover(r, t); }, 0);
+        if (!best || d < best.d || (d === best.d && all < best.all)) best = { t: t, w: MAP_MIN, d: d, all: all };
+      });
+    }
     panel.style.left = left + 'px'; panel.style.top = Math.round(best.t) + 'px';
     setMapW(best.w);
     // a narrower panel wraps the sentence onto more lines: shrink the maps until it fits

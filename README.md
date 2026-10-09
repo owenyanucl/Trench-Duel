@@ -28,15 +28,16 @@
 
 ![Team pill: Cleveland's tendencies before tonight](output/step_team.png)
 
-**7. Where a player is lining up tonight vs before.** A coverage heat map for a future in-game form card.
+**7. Where a player is lining up tonight vs before.** The **Heat map** button in the bar opens a panel on the left: a player's positions from snap to throw, sack or scramble before tonight (weeks 1–3) beside tonight so far, on one colour scale. `#heat=1` opens it and `#heatPlayer=<id>` picks the player. Below, the same map from `heatmaps.py`, with tonight split by half.
 
-![John Johnson III coverage heat map](output/heatmap_johnson_2021100305.png)
+![Heat map panel: John Johnson III before tonight vs tonight so far](output/step_heatmap.png)
 
 ## Run it
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install pandas numpy matplotlib
 .venv/bin/python trench_duels.py            # about 15 s; writes output/ and overlay/data/demo_game.js
+.venv/bin/python heatmaps.py --overlay      # regenerates overlay/data/heat.js, the Heat map panel's weeks 1–3 maps
 open overlay/index.html                     # the co-streamer overlay over a replay of CLE @ MIN
 python3 -m http.server 8000 -d overlay      # Broadcast mode (YouTube clip) needs http: open http://localhost:8000
 .venv/bin/python heatmaps.py                # coverage heat map: John Johnson III tonight vs weeks 1–3 (--player, --game)
@@ -44,7 +45,7 @@ python3 -m http.server 8000 -d overlay      # Broadcast mode (YouTube clip) need
 
 In the overlay, `Tab` shows or hides the bar, `H` or `Esc` hides everything, and `←` `→` `space` step through plays. Drag the bar by its handle to a snap point (top-left, top-centre, top-right); `Solid` swaps the tinted bar for an opaque one. Pills start collapsed; the "Suggested" chip opens the game's most-met matchup. ▲ and ▼ mark above or below the league average, not good or bad.
 
-The **Heat map** button opens a panel on the left: where a player stood from snap to throw, before tonight (weeks 1–3, from `overlay/data/heat.js`) beside tonight so far, on one colour scale, with one sentence comparing his depth at the throw. Tonight counts only plays already shown, and the play on screen joins once its tracking has arrived. The map follows the player picked in the bar or on the field; with nobody picked it shows John Johnson III when Cleveland defends and the defense's first safety otherwise, and the panel's own menu switches player. `#play=75&phase=after&heat=1` opens it at the end of the game; `&heatPlayer=44903` picks the player.
+The **Heat map** button opens a panel on the left: where a player stood from the snap to the throw or sack, before tonight (weeks 1–3, from `overlay/data/heat.js`) beside tonight so far, on one colour scale, with one sentence comparing his depth at the throw. Tonight counts only plays already shown, and the play on screen joins once its tracking has arrived. The map follows the player picked in the bar or on the field; with nobody picked it shows John Johnson III when Cleveland defends and the defense's first safety otherwise, and the panel's own menu switches player. `#play=75&phase=after&heat=1` opens it at the end of the game; `&heatPlayer=44903` picks the player.
 
 `http://localhost:8000/` is the streamer's controller and has everything. `http://localhost:8000/viewer.html` is what viewers see, and what OBS would capture: the game plus only what the controller pushes. In the Duel pill, "Push to stream" puts the Duel card on the viewer page and shows "ON AIR: Garrett vs Hill" in the controller's bar; clicking again pulls it, `H` pulls it too, and it clears by itself at the next snap. `viewer.html#demo=push&play=67&phase=after` renders the pushed card on its own.
 
@@ -60,7 +61,7 @@ The game plays back as a simulated live feed, labelled "SIMULATED LIVE · 2021 D
 | `output/teams.csv` | Weeks 1–8 per-team blitz rate, 3rd-down blitz rate, man coverage rate, top coverages, and pressure and sack rates for and against |
 | `output/validation.txt` | Agreement with PFF's hand-charted pressures, overall and by alignment and threshold |
 | `output/top_rushers.png` | Top rushers over expectation, weeks 1–8 (min 150 rusher-plays) |
-| `heatmaps.py`, `output/heatmap_johnson_2021100305.png` | Coverage heat map: a player's position from snap to throw, stacked on the line of scrimmage, tonight's halves against his earlier weeks. For John Johnson III, tonight matches his usual depth (19.3 yd at the throw over 40 plays vs 18.3 yd over 87) |
+| `heatmaps.py`, `output/heatmap_johnson_2021100305.png` | Coverage heat map: a player's position from snap to throw, sack or scramble, stacked on the line of scrimmage, tonight's halves against his earlier weeks. For John Johnson III, tonight matches his usual depth (19.2 yd at the throw, sack or scramble over 40 plays vs 18.3 yd over 92); `--overlay` writes the panel's `overlay/data/heat.js` |
 | `output/overlay_screenshot.png`, `output/viewer_screenshot.png` | The streamer's controller and the viewer screen at play 67, Garrett vs Hill |
 | `overlay/` | The overlay: a simulated live replay drawn from tracking, or a Broadcast clip of one play, with the draggable top bar (situation, offense look, defense slots), a suggested-matchup chip, Duel, Pressure and Team pills, the Heat map panel (`heat.js`, `heat.css`), a Solid toggle and hide-all; `viewer.html` is the viewer page that shows only what the controller pushes |
 

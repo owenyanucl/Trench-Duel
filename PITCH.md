@@ -47,8 +47,8 @@ The core is steps 1–6 and 9: the private controller, push to stream, the spoil
    > "One key, and the screen is all football."
 8. **Optional, Team pill:** `http://localhost:8000/#play=67&phase=after&team=CLE`. Weeks 1–3 only, a count beside every percentage. ▲ and ▼ mark above or below the league average, not good or bad.
    > "Before tonight, Cleveland blitzed on 22 of 93 passing plays, about the league rate. But they sacked the quarterback on 12 of 93, 13%, against 6% for the league. Pressure without extra rushers is what a rusher like Garrett buys you."
-8b. **Optional, coverage heat map (built in Python, next as an overlay pill):** show `output/heatmap_johnson_2021100305.png`. John Johnson III's position from snap to throw, stacked on the line of scrimmage: weeks 1–3 against tonight's first and second half, one colour scale.
-   > "Every play starts somewhere different, so we line them all up on the line of scrimmage and stack them. This is where Johnson played before tonight, and this is tonight. The honest answer is: the same. 19.3 yards deep at the throw over 40 plays, against 18.3 over 87 before, which is normal variation. When a safety starts cheating up or drifting wide, an in-game version would show it, from plays already seen."
+8b. **Optional, Heat map panel:** click **Heat map** in the bar (or open `http://localhost:8000/#play=75&phase=after&heat=1`); the panel opens on the left. John Johnson III's position from snap to throw, stacked on the line of scrimmage: weeks 1–3 against tonight's first and second half, one colour scale.
+   > "Every play starts somewhere different, so we line them all up on the line of scrimmage and stack them. This is where Johnson played before tonight, and this is tonight. The honest answer is: the same. 19.2 yards deep at the throw over 40 plays, against 18.3 over 92 before, which is normal variation. When a safety starts cheating up or drifting wide, the panel shows it during the game, from plays already seen."
 9. **Broadcast clip:** `http://localhost:8000/#bg=video&duel=1&pressure=1`. The real broadcast of play 38: 3rd quarter, 11:29, 3rd & 3. It opens before the snap. Let the clip run to Takkarist McKinley's sack of Cousins, then press `N` twice (or "Next phase" twice: live, then after-play) to reveal the after-play result. The story reads "#55 McKinley sack — QB held it 5.1 s, no blocker charged", which matches the clip.
    > "Here is the overlay over real footage. McKinley gets the sack, but our tally does not score his rep as a win, and that is on purpose. The sack came 5.1 seconds after the snap, after our 3-second window. Inside 3 seconds, Garrett had already beaten the Hill and Bradbury double team: 1.9 yards from Cousins at 2.7 seconds. The metric measures beating your blocker fast. A sack at 5.1 seconds says as much about the coverage as the rush."
 
@@ -79,7 +79,6 @@ The core is steps 1–6 and 9: the private controller, push to stream, the spoil
 4. **Next Gen Stats live models in place of PFF charting**, since PFF charts after the game.
 5. **The rest of the team's spec:** five fixed pills, per-position cards for the QB, pass rusher, lineman and team defense, and layouts that snap into place on their own.
 6. **OBS integration**, so the overlay drops into the software streamers already use.
-7. **An in-game form pill:** the coverage heat map (`heatmaps.py`) inside the overlay, built only from plays already shown and compared with the player's own earlier weeks.
 
 ## 2:55–3:00 Close
 
@@ -129,7 +128,7 @@ The core is steps 1–6 and 9: the private controller, push to stream, the spoil
 | League blitz 797 of 3,383; sacks 219 of 3,383 (6%) | `overlay/data/demo_game.js` `league.teamToDate` |
 | Play 38: Q3 11:29, 3rd & 3, sack at 5.1 s, no blocker charged, #55 | `overlay/data/demo_game.js` playId 2349 |
 | Garrett 1.9 yd at 2.7 s vs Hill and Bradbury | `output/reps.csv` (playId 2349: 1.86 yd, 2.7 s, blockers 43640 and 47801) |
-| Johnson III: 19.3 yd at the throw over 40 plays tonight; 18.3 yd over 87 plays in weeks 1–3 | `output/heatmap_johnson_2021100305.txt` (19.29 yd over 40; 18.32 yd over 87) |
+| Johnson III: 19.2 yd at the throw over 40 plays tonight; 18.3 yd over 92 plays in weeks 1–3 | `output/heatmap_johnson_2021100305.txt` (19.24 yd over 40; 18.29 yd over 92); the Heat map panel at `#play=75&phase=after&heat=1` |
 | 195 of 543 sacks with no blocker charged | `data/plays.csv` sacks joined to `data/pffScoutingData.csv` `pff_sackAllowed` |
 | 26–51 s stream delay (Super Bowl LIX) | brief section 13 |
 | ESPN Win Rate 2.5 s; STRAIN; Penn 2026; FAN.live + CSN | brief section 13 |

@@ -110,12 +110,11 @@
   window.TD = {
     get state() { return S; },
     plays: plays,
-    players: T.players,
     selected: function () { return S.selected; },
-    // earlier plays always; the play on screen once the tracking up to `frame` (default: the throw or sack) has arrived
-    isReady: function (k, frame) {
+    // earlier plays always; the play on screen once its tracking up to the throw or sack has arrived
+    isReady: function (k) {
       if (k !== S.i) return k < S.i;
-      return S.after || effFrame() >= (frame == null ? plays[k].endFrame : frame) + DATA_LATENCY_FRAMES;
+      return S.after || effFrame() >= plays[k].endFrame + DATA_LATENCY_FRAMES;
     },
     onRender: []
   };
@@ -808,7 +807,7 @@
     // at the snap, pills the streamer opened more than PILL_STALE_MS ago fold away while the replay plays
     if (prev === 'pre' && ph === 'live' && S.playing) {
       var now = performance.now();
-      ['duel', 'pressure', 'team'].forEach(function (k) {
+      ['duel', 'pressure', 'team', 'heat'].forEach(function (k) {
         if (S.pills[k] && now - (S.openedAt[k] || 0) > PILL_STALE_MS) { S.pills[k] = false; if (k === 'team') S.team = null; }
       });
       renderChips(); renderPicker();
@@ -935,7 +934,7 @@
     S.pills.pressure = hash.pressure === '1';
     S.pills.duel = hash.duel === '1';
     S.pills.heat = hash.heat === '1';
-    S.openedAt = { duel: performance.now(), pressure: performance.now(), team: performance.now() };
+    S.openedAt = { duel: performance.now(), pressure: performance.now(), team: performance.now(), heat: performance.now() };
     if (S.pills.duel && S.selected == null && !S.pair && hl) S.pair = { r: hl[0], b: hl[1] };
     if (hash.team && teams.indexOf(hash.team) >= 0) { S.team = hash.team; S.pills.team = true; }
     else { S.team = null; S.pills.team = false; }

@@ -1,31 +1,31 @@
 John Johnson (nflId 44903, CLE FS) · CLE @ MIN, week 4, gameId 2021100305
 Baseline games: 2021091209, 2021091902, 2021092601 (weeks 1–3)
-Frames: snap to first throw/sack after the snap (last frame if neither); yards relative to the ball at the snap, offense moving toward +downfield.
+Frames: the replay's window (trench_duels.play_windows), snap to the first throw, sack, scramble or shovel pass after the snap (last frame if none); yards relative to the ball at the snap, offense moving toward +downfield.
 
 Weeks 1–3 baseline
-  plays 92, frames 3168, plays without a throw or sack 5
-  avg depth at throw/sack 18.32 yd over 87 plays
-  avg depth over all frames 15.92 yd
-  avg width from the ball 6.30 yd
-  share of time deeper than 10 yd 92.4%
+  plays 92, frames 3157, plays without a throw, sack or scramble 0
+  avg depth at throw/sack/scramble 18.29 yd over 92 plays
+  avg depth over all frames 15.85 yd
+  avg width from the ball 6.33 yd
+  share of time deeper than 10 yd 92.3%
 Tonight: 1st half
-  plays 13, frames 377, plays without a throw or sack 0
-  avg depth at throw/sack 18.25 yd over 13 plays
-  avg depth over all frames 14.89 yd
-  avg width from the ball 6.40 yd
+  plays 13, frames 376, plays without a throw, sack or scramble 0
+  avg depth at throw/sack/scramble 18.27 yd over 13 plays
+  avg depth over all frames 14.85 yd
+  avg width from the ball 6.39 yd
   share of time deeper than 10 yd 96.8%
 Tonight: 2nd half
-  plays 27, frames 824, plays without a throw or sack 0
-  avg depth at throw/sack 19.78 yd over 27 plays
-  avg depth over all frames 16.52 yd
-  avg width from the ball 6.95 yd
+  plays 27, frames 827, plays without a throw, sack or scramble 0
+  avg depth at throw/sack/scramble 19.71 yd over 27 plays
+  avg depth over all frames 16.45 yd
+  avg width from the ball 6.96 yd
   share of time deeper than 10 yd 97.5%
 Tonight: whole game
-  plays 40, frames 1201, plays without a throw or sack 0
-  avg depth at throw/sack 19.29 yd over 40 plays
-  avg depth over all frames 16.01 yd
+  plays 40, frames 1203, plays without a throw, sack or scramble 0
+  avg depth at throw/sack/scramble 19.24 yd over 40 plays
+  avg depth over all frames 15.95 yd
   avg width from the ball 6.78 yd
   share of time deeper than 10 yd 97.3%
 
-Tonight vs baseline, depth at throw/sack: +0.96 yd (permutation p = 0.411, 40 vs 87 plays)
-Takeaway: Tonight he played at his usual depth: 19.3 yd at the throw/sack over 40 plays vs 18.3 yd over 87 plays in weeks 1–3.
+Tonight vs baseline, depth at throw/sack/scramble: +0.95 yd (permutation p = 0.418, 40 vs 92 plays)
+Takeaway: Tonight he played at his usual depth: 19.2 yd at the throw/sack/scramble over 40 plays vs 18.3 yd over 92 plays in weeks 1–3.
