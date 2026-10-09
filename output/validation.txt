@@ -1,0 +1,11 @@
+Rusher-plays: 36263
+Definition: within 2.0 yds of the QB inside 3.0s of the snap (or before the throw)
+Tracking 'win' rate: 6.7%   PFF pressure rate: 11.6%
+When tracking says win, PFF charted a pressure 66.8% of the time (5.7x the base rate)
+Of PFF pressures, tracking flags 38.4%
+
+Crosstab (rows: tracking win, cols: PFF pressure):
+pffPressure  False  True 
+won                      
+False        31243   2594
+True           806   1620
