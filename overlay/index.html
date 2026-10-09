@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trench Duel</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="field"></canvas>
+
+<!-- Game view chrome: part of the replay, not the overlay -->
+<div id="scorebug" class="chrome">
+  <span id="sbTeams" class="sb-teams"></span>
+  <span id="sbQtr" class="sb-cell"></span>
+  <span id="sbClock" class="sb-cell"></span>
+  <span id="sbDown" class="sb-cell sb-down"></span>
+  <span id="sbPlay" class="sb-cell sb-dim"></span>
+</div>
+
+<div id="controls" class="chrome">
+  <button id="btnPrev" title="Previous play (←)">&#9664;&#9664;</button>
+  <button id="btnPlay" title="Play / pause (Space)">&#10073;&#10073;</button>
+  <button id="btnNext" title="Next play (→)">&#9654;&#9654;</button>
+  <span id="tClock" class="t-clock">0.0s</span>
+  <span id="playResult" class="play-result"></span>
+  <button id="btnHide" class="btn-hide" title="Hide all (H / Esc)">Hide all</button>
+</div>
+
+<div id="replayLabel" class="replay-label"></div>
+
+<!-- The product: the overlay -->
+<div id="overlay">
+  <div id="bar">
+    <div id="handle" class="handle" title="Drag to move">&#8942;&#8942;</div>
+    <div class="brand">TRENCH<b>DUEL</b></div>
+    <div id="chips" class="chips"></div>
+    <select id="picker" title="Pick a player"></select>
+    <button class="icon-btn" data-pill="duel" title="Trench Duel">&#9876;<span>Duel</span></button>
+    <button class="icon-btn" data-pill="pressure" title="Pressure">&#9678;<span>Pressure</span></button>
+    <button id="barClose" class="icon-btn close" title="Hide all (H / Esc)">&#10005;</button>
+  </div>
+  <div id="pills">
+    <section id="pill-duel" class="pill"></section>
+    <section id="pill-pressure" class="pill"></section>
+  </div>
+</div>
+
+<div id="hint" class="hint">Tab overlay · H/Esc hide all · ← → plays · Space pause</div>
+<div id="fatal" class="fatal" hidden>Missing data: <code>overlay/data/demo_game.js</code> did not load.</div>
+
+<script src="data/demo_game.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
