@@ -14,7 +14,7 @@ Outputs:
   output/validation.txt        how the tracking definition agrees with PFF pressures
   output/teams.csv             per-team blitz, coverage and pressure rates on defense, pressure allowed on offense
   output/*.png                 charts
-  overlay/data/demo_game.js    one game's replay and duels for the co-streamer overlay
+  overlay/data/demo_game.js    one game's replay and duels for the co-streamer overlay, with to-date context from earlier weeks
 
 Run: python trench_duels.py [--game GAMEID]
 """
@@ -23,6 +23,7 @@ import argparse
 import glob
 import json
 import os
+import re
 
 import numpy as np
 import pandas as pd
@@ -35,10 +36,16 @@ FPS = 10
 WINDOW_SEC = 3.0
 THRESHOLD_YDS = 2.0
 SNAP_EVENTS = {"ball_snap", "autoevent_ballsnap"}
-END_EVENTS = {"pass_forward", "autoevent_passforward", "qb_sack", "qb_strip_sack", "run", "pass_shovel"}
+THROW_EVENTS = {"pass_forward", "autoevent_passforward"}
+SACK_EVENTS = {"qb_sack", "qb_strip_sack"}
+END_EVENTS = THROW_EVENTS | SACK_EVENTS | {"run", "pass_shovel"}
 INTERIOR = {"NT", "NLT", "NRT", "DLT", "DRT"}
 EDGE = {"LE", "RE", "LEO", "REO", "LOLB", "ROLB"}
 DEFAULT_GAME = 2021100305  # Week 4, CLE @ MIN: Myles Garrett vs Rashod Hill
+FORMATIONS = {"SHOTGUN": "Shotgun", "EMPTY": "Empty", "SINGLEBACK": "Singleback", "I_FORM": "I-form", "PISTOL": "Pistol",
+              "JUMBO": "Jumbo", "WILDCAT": "Wildcat"}
+PRESSURE_TYPES = [("sack", "pff_sack", "pff_sackAllowed"), ("hit", "pff_hit", "pff_hitAllowed"),
+                  ("hurry", "pff_hurry", "pff_hurryAllowed")]
 
 
 def load_tables():
@@ -61,6 +68,18 @@ def play_windows(track):
     w["end"] = w["end_event"].fillna(w["last"])
     w["close"] = np.minimum(w["end"], w["snap"] + WINDOW_SEC * FPS)
     return w.astype({"snap": int, "end": int, "close": int})
+
+
+def play_timing(track, windows):
+    """Seconds from the snap to the first forward pass and to the sack, per play."""
+    ev = track.loc[track["event"].isin(THROW_EVENTS | SACK_EVENTS), ["playId", "frameId", "event"]].drop_duplicates()
+    ev = ev.merge(windows["snap"], left_on="playId", right_index=True)
+    ev = ev[ev["frameId"] > ev["snap"]]
+    out = pd.DataFrame(index=windows.index)
+    for name, events in (("timeToThrow", THROW_EVENTS), ("timeToSack", SACK_EVENTS)):
+        e = ev[ev["event"].isin(events)].groupby("playId")
+        out[name] = (e["frameId"].min() - e["snap"].first()) / FPS
+    return out
 
 
 def rusher_closest(track, pff_game, windows):
@@ -87,7 +106,7 @@ def build_reps(plays, pff, games):
                      ["gameId", "playId", "nflId", "pff_nflIdBlockedPlayer", "pff_blockType"]]
     blocks = blocks.rename(columns={"nflId": "blockerId", "pff_nflIdBlockedPlayer": "rusherId"})
     blocks["rusherId"] = blocks["rusherId"].astype(int)
-    rush_rows = []
+    rush_rows, timing_rows = [], []
     for path in sorted(glob.glob(os.path.join(DATA, "tracking", "tracking_*.csv"))):
         track = pd.read_csv(path, usecols=["gameId", "playId", "nflId", "frameId", "x", "y", "event"])
         gid = int(track["gameId"].iloc[0])
@@ -95,6 +114,8 @@ def build_reps(plays, pff, games):
         rc = rusher_closest(track, pff[pff["gameId"] == gid], windows)
         rc["gameId"] = gid
         rush_rows.append(rc)
+        timing_rows.append(play_timing(track, windows).assign(gameId=gid).reset_index())
+    timing = pd.concat(timing_rows, ignore_index=True)
     rush = pd.concat(rush_rows, ignore_index=True).rename(columns={"nflId": "rusherId"})
     reps = blocks.merge(rush, on=["gameId", "playId", "rusherId"], how="inner")
     reps["rusherWon"] = reps["closestYds"] <= THRESHOLD_YDS
@@ -112,7 +133,7 @@ def build_reps(plays, pff, games):
     expected = rusher_plays.groupby("align")["rusherWon"].mean()
     rusher_plays["expected"] = rusher_plays["align"].map(expected)
     reps["expected"] = reps["align"].map(expected)
-    return reps, rusher_plays, rush
+    return reps, rusher_plays, rush, timing
 
 
 def validate(rush, pff):
@@ -193,16 +214,22 @@ def team_rates(df):
             "sackRate": (df["passResult"] == "S").mean()}
 
 
-def team_table(plays, pff):
-    """Per-team blitz, coverage and pressure rates on defense and pressure allowed on offense, plus the league."""
-    rushers = pff[pff["pff_role"] == "Pass Rush"].groupby(["gameId", "playId"]).size().rename("rushers")
+def play_flags(plays, pff, timing, games):
+    """Plays with week, rusher and blocker counts, blitz (5+ rushers), any PFF pressure, and snap-to-throw/sack seconds."""
+    roles = pff.groupby(["gameId", "playId"])["pff_role"].value_counts().unstack(fill_value=0)
+    roles = roles.reindex(columns=["Pass Rush", "Pass Block"], fill_value=0).rename(columns={"Pass Rush": "rushers", "Pass Block": "blockers"})
     pressured = (pff[["pff_hit", "pff_hurry", "pff_sack"]].fillna(0) == 1).any(axis=1)
     pressured = pressured.groupby([pff["gameId"], pff["playId"]]).any().rename("pressure")
-    p = plays.join(rushers, on=["gameId", "playId"]).join(pressured, on=["gameId", "playId"])
-    p["rushers"] = p["rushers"].fillna(0)
+    p = plays.merge(games[["gameId", "week"]], on="gameId").join(roles, on=["gameId", "playId"]).join(pressured, on=["gameId", "playId"])
+    p = p.merge(timing, on=["gameId", "playId"], how="left")
+    p[["rushers", "blockers"]] = p[["rushers", "blockers"]].fillna(0).astype(int)
     p["pressure"] = p["pressure"].eq(True)
     p["blitz"] = p["rushers"] >= 5
+    return p
 
+
+def team_table(p):
+    """Per-team blitz, coverage and pressure rates on defense and pressure allowed on offense, plus the league."""
     rows = []
     for team in sorted(p["defensiveTeam"].unique()):
         d = p[p["defensiveTeam"] == team]
@@ -218,7 +245,71 @@ def team_table(plays, pff):
     return teams, league
 
 
+def count(mask):
+    return {"n": int(mask.sum()), "of": int(len(mask))}
+
+
+def team_counts(df):
+    """Defensive tendencies as {n, of} counts over any set of plays."""
+    typed = df[df["pff_passCoverageType"].isin(["Man", "Zone"])]
+    third_long = df[(df["down"] == 3) & (df["yardsToGo"] >= 7)]
+    return {"blitz": count(df["blitz"]), "thirdLongBlitz": count(third_long["blitz"]),
+            "man": count(typed["pff_passCoverageType"] == "Man"), "pressure": count(df["pressure"]),
+            "sack": count(df["passResult"] == "S")}
+
+
+def team_to_date(p, team):
+    """One team's defensive tendencies and pass protection as counts over the plays given."""
+    d = p[p["defensiveTeam"] == team]
+    o = p[p["possessionTeam"] == team]
+    ttt = o["timeToThrow"].median()
+    return {"defense": {"plays": len(d), **team_counts(d),
+                        "coverages": [{"name": k, "n": int(v), "of": len(d)}
+                                      for k, v in d["pff_passCoverage"].dropna().value_counts().head(3).items()]},
+            "offense": {"plays": len(o), "pressureAllowed": count(o["pressure"]), "sackAllowed": count(o["passResult"] == "S"),
+                        "timeToThrowMedian": None if pd.isna(ttt) else round(float(ttt), 2)}}
+
+
+def season_entries(season, ids):
+    """Payload season lines for the given players, keeping each player's larger role."""
+    out = {}
+    for r in season[season["nflId"].isin(ids)].itertuples():
+        key = str(int(r.nflId))
+        if key not in out or r.reps > out[key]["reps"]:
+            out[key] = {"reps": int(r.reps), "wins": int(r.wins), "winRate": round(float(r.winRate), 4),
+                        "expected": round(float(r.expected), 4), "role": r.role}
+    return out
+
+
+def personnel_code(s):
+    """'1 RB, 1 TE, 3 WR' -> '11'."""
+    rb = re.search(r"(\d+) RB", s) if isinstance(s, str) else None
+    te = re.search(r"(\d+) TE", s) if isinstance(s, str) else None
+    return rb.group(1) + te.group(1) if rb and te else None
+
+
+def pressure_events(pff_play, jerseys, play):
+    """One entry per defender credited with a sack, hit or hurry (his most severe), sacks first, with the blocker charged."""
+    events = []
+    for kind, credit, allowed in PRESSURE_TYPES:
+        charged = pff_play[pff_play[allowed] == 1]
+        for r in pff_play[pff_play[credit] == 1].itertuples():
+            if any(e["rusherId"] == int(r.nflId) for e in events):
+                continue
+            match = charged[charged["pff_nflIdBlockedPlayer"] == r.nflId]
+            blocker = match.iloc[0] if len(match) else charged.iloc[0] if len(charged) else None
+            sec = play["timeToSack" if kind == "sack" else "timeToThrow"]
+            events.append({"type": kind, "rusherId": int(r.nflId),
+                           "jersey": int(jerseys.loc[r.nflId, "jerseyNumber"]) if r.nflId in jerseys.index else None,
+                           "rusherPos": None if pd.isna(r.pff_positionLinedUp) else r.pff_positionLinedUp,
+                           "blockerId": None if blocker is None else int(blocker["nflId"]),
+                           "blockerPos": None if blocker is None or pd.isna(blocker["pff_positionLinedUp"]) else blocker["pff_positionLinedUp"],
+                           "seconds": None if pd.isna(sec) else round(float(sec), 1)})
+    return events
+
+
 def demo_game(game_id, plays, players, games, pff, reps, rusher_plays, season, teams, team_league):
+    """Writes the overlay payload: weeks 1-8 season context, plus to-date context from weeks before the game."""
     track = pd.read_csv(os.path.join(DATA, "tracking", f"tracking_{game_id}.csv"))
     flip = track["playDirection"] == "left"
     track.loc[flip, "x"] = 120 - track.loc[flip, "x"]
@@ -229,6 +320,7 @@ def demo_game(game_id, plays, players, games, pff, reps, rusher_plays, season, t
     gp = plays[plays["gameId"] == game_id].sort_values("playId")
     pff_g = pff[pff["gameId"] == game_id]
     reps_g = reps[reps["gameId"] == game_id]
+    jerseys = track.dropna(subset=["nflId"]).groupby("nflId")[["team", "jerseyNumber"]].first()
 
     out_plays = []
     for _, p in gp.iterrows():
@@ -250,6 +342,7 @@ def demo_game(game_id, plays, players, games, pff, reps, rusher_plays, season, t
                   "rusherWon": bool(r.rusherWon)}
                  for r in reps_g[reps_g["playId"] == pid].itertuples()]
         w = windows.loc[pid]
+        ttt = p["timeToThrow"]
         out_plays.append({
             "playId": pid, "quarter": int(p["quarter"]), "clock": p["gameClock"], "down": int(p["down"]),
             "yardsToGo": int(p["yardsToGo"]), "offense": p["possessionTeam"], "defense": p["defensiveTeam"],
@@ -258,31 +351,43 @@ def demo_game(game_id, plays, players, games, pff, reps, rusher_plays, season, t
             "qbId": int(qb.iloc[0]) if len(qb) else None,
             "snapFrame": index[w["snap"]], "endFrame": index[w["end"]], "nFrames": len(frames),
             "ball": ball.values.tolist(), "players": people, "duels": duels,
+            "personnel": personnel_code(p["personnelO"]), "formation": FORMATIONS.get(p["offenseFormation"]),
+            "box": None if pd.isna(p["defendersInBox"]) else int(p["defendersInBox"]),
+            "rushers": int(p["rushers"]), "blockers": int(p["blockers"]),
+            "timeToThrow": None if pd.isna(ttt) else round(float(ttt), 1),
+            "pressureEvents": pressure_events(pff_g[pff_g["playId"] == pid], jerseys, p),
         })
 
     on_field = {pl["nflId"] for op in out_plays for pl in op["players"]}
-    jerseys = track.dropna(subset=["nflId"]).groupby("nflId")[["team", "jerseyNumber"]].first()
     pl = players.set_index("nflId")
     player_map = {str(n): {"name": pl.loc[n, "displayName"], "pos": pl.loc[n, "officialPosition"],
                            "team": jerseys.loc[n, "team"], "jersey": int(jerseys.loc[n, "jerseyNumber"])}
                   for n in on_field if n in pl.index}
-    season_map = {}
-    for r in season[season["nflId"].isin(on_field)].itertuples():
-        key = str(int(r.nflId))
-        if key not in season_map or r.reps > season_map[key]["reps"]:
-            season_map[key] = {"reps": int(r.reps), "wins": int(r.wins), "winRate": round(float(r.winRate), 4),
-                               "expected": round(float(r.expected), 4), "role": r.role}
+    week = int(g["week"])
+    rp_td = rusher_plays[rusher_plays["week"] < week].copy()
+    reps_td = reps[reps["week"] < week].copy()
+    expected_td = rp_td.groupby("align")["rusherWon"].mean()
+    rp_td["expected"] = rp_td["align"].map(expected_td)
+    reps_td["expected"] = reps_td["align"].map(expected_td)
+    season_td = season_table(reps_td, rp_td, players)
+    plays_td = plays[plays["week"] < week]
 
     payload = {
         "meta": {"gameId": int(game_id), "week": int(g["week"]), "date": g["gameDate"], "home": g["homeTeamAbbr"],
                  "away": g["visitorTeamAbbr"],
-                 "label": f"Replay of 2021 Week {int(g['week'])} {g['visitorTeamAbbr']} @ {g['homeTeamAbbr']} from NFL tracking data — not live"},
+                 "label": f"Replay of 2021 Week {int(g['week'])} {g['visitorTeamAbbr']} @ {g['homeTeamAbbr']} from NFL tracking data — not live",
+                 "toDateWeeks": sorted(int(x) for x in games.loc[games["week"] < week, "week"].unique())},
         "players": player_map,
-        "season": season_map,
+        "season": season_entries(season, on_field),
+        "seasonToDate": season_entries(season_td, on_field),
         "league": {"repWinRate": round(float(rusher_plays["rusherWon"].mean()), 4), "thresholdYds": THRESHOLD_YDS, "windowSec": WINDOW_SEC,
                    "byAlign": {k: round(float(v), 4) for k, v in rusher_plays.groupby("align")["rusherWon"].mean().items()},
-                   "team": team_league},
+                   "team": team_league,
+                   "toDate": {"repWinRate": round(float(rp_td["rusherWon"].mean()), 4),
+                              "byAlign": {k: round(float(v), 4) for k, v in expected_td.items()}},
+                   "teamToDate": team_counts(plays_td)},
         "teams": {},
+        "teamsToDate": {t: team_to_date(plays_td, t) for t in (g["visitorTeamAbbr"], g["homeTeamAbbr"])},
         "plays": out_plays,
     }
     for t in teams[teams["team"].isin([g["homeTeamAbbr"], g["visitorTeamAbbr"]])].itertuples():
@@ -309,7 +414,7 @@ def main():
     os.makedirs(OUT, exist_ok=True)
 
     plays, players, games, pff = load_tables()
-    reps, rusher_plays, rush = build_reps(plays, pff, games)
+    reps, rusher_plays, rush, timing = build_reps(plays, pff, games)
     reps.to_csv(os.path.join(OUT, "reps.csv"), index=False)
     report = validate(rush, pff)
     with open(os.path.join(OUT, "validation.txt"), "w") as f:
@@ -330,7 +435,8 @@ def main():
                  .merge(players[["nflId", "displayName"]].rename(columns={"nflId": "blockerId", "displayName": "blocker"}), on="blockerId")
     print(pairs[pairs["reps"] >= 15].sort_values("wins", ascending=False).head(10).to_string(index=False))
 
-    teams, team_league = team_table(plays, pff)
+    flagged = play_flags(plays, pff, timing, games)
+    teams, team_league = team_table(flagged)
     csv = teams.assign(coverages=teams["coverages"].map(lambda c: ", ".join(f"{x['name']} {x['share']:.0%}" for x in c)))
     csv.round(4).to_csv(os.path.join(OUT, "teams.csv"), index=False)
     cols = ["team", "defPlays", "blitzRate", "thirdDownBlitzRate", "manRate", "pressureRate", "sackRate", "pressureAllowedRate"]
@@ -341,7 +447,7 @@ def main():
     print("Demo game teams:")
     print(csv[csv["team"].isin([g["visitorTeamAbbr"], g["homeTeamAbbr"]])][cols + ["coverages"]].round(3).to_string(index=False))
 
-    n = demo_game(args.game, plays, players, games, pff, reps, rusher_plays, season, teams, team_league)
+    n = demo_game(args.game, flagged, players, games, pff, reps, rusher_plays, season, teams, team_league)
     print(f"\nWrote overlay/data/demo_game.js with {n} plays from game {args.game}")
 
 
