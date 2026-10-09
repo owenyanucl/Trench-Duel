@@ -1,0 +1,353 @@
+:root {
+  --glass: rgba(14, 16, 19, 0.72);
+  --solid: rgb(16, 18, 25);
+  --blur: blur(12px) saturate(1.2);
+  --line: rgba(255, 255, 255, 0.14);
+  --text: #f4f6fa;
+  --dim: #a9b1c2;
+  --accent: #eef2fa;
+  --accent-soft: rgba(238, 242, 250, 0.16);
+  --accent-line: rgba(238, 242, 250, 0.55);
+  --win: #ff8a3d;
+  --hold: #4fc3ff;
+  --fade: 200ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --safe-x: max(12px, 5vw);
+  --safe-y: max(12px, 5vh);
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+* { box-sizing: border-box; font-variant-numeric: tabular-nums; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0e1013; color: var(--text); font: 12px/1.35 var(--font); font-variant-numeric: tabular-nums; }
+canvas#field { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+button, select { font: inherit; color: inherit; }
+
+/* ---------- game view chrome ---------- */
+.chrome { position: fixed; display: flex; align-items: center; gap: 6px; background: rgba(0, 0, 0, 0.62); border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; user-select: none; }
+#scorebug { left: 12px; bottom: 12px; font-weight: 600; letter-spacing: 0.02em; }
+.sb-teams { display: flex; gap: 4px; align-items: center; }
+.sb-team { padding: 1px 6px; border-radius: 4px; font-weight: 800; }
+.sb-vs { color: var(--dim); font-weight: 500; font-size: 11px; }
+.sb-cell { padding: 0 6px; border-left: 1px solid var(--line); }
+.sb-down { color: var(--accent); font-weight: 800; }
+.sb-dim { color: var(--dim); font-weight: 500; }
+
+#controls { left: 50%; bottom: 12px; transform: translateX(-50%); }
+#controls button { background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; cursor: pointer; font-size: 11px; }
+#controls button:hover { background: rgba(255, 255, 255, 0.18); }
+.t-clock { font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; color: var(--dim); }
+.play-result { font-weight: 700; min-width: 0; }
+.play-result:empty { display: none; }
+#controls .btn-hide { margin-left: 4px; border-color: rgba(255, 255, 255, 0.3); }
+
+.replay-label { position: fixed; right: 12px; bottom: 12px; z-index: 1000; background: rgba(0, 0, 0, 0.7); border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 6px; padding: 4px 8px; font-size: 11px; font-weight: 600; pointer-events: none; max-width: min(46vw, max(280px, calc(50vw - 160px))); }
+.replay-label b { color: var(--text); letter-spacing: 0.08em; margin-right: 4px; }
+
+.hint { position: fixed; right: 12px; top: 10px; color: rgba(255, 255, 255, 0.55); font-size: 10px; pointer-events: none; }
+.fatal { position: fixed; inset: 40% 20% auto; background: var(--solid); border: 1px solid var(--win); padding: 16px; border-radius: 8px; font-size: 14px; text-align: center; }
+
+/* ---------- overlay ---------- */
+#overlay { position: fixed; top: 10px; left: 50%; z-index: 50; width: max-content; max-width: calc(100vw - 16px); display: flex; flex-direction: column; align-items: center; gap: 6px; }
+#overlay.hidden { display: none; }
+#bar { display: flex; align-items: center; gap: 6px; background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--line); border-radius: 999px; padding: 4px 6px 4px 4px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); white-space: nowrap; }
+.handle { cursor: grab; padding: 4px 4px; color: var(--dim); letter-spacing: -3px; font-size: 13px; user-select: none; touch-action: none; }
+.handle:active, body.dragging .handle { cursor: grabbing; }
+.brand { font-weight: 300; letter-spacing: 0.14em; font-size: 10px; color: var(--dim); padding-right: 2px; }
+.brand b { font-weight: 800; color: var(--accent); margin-left: 2px; }
+.chips { display: flex; gap: 3px; }
+.chip { border: 1px solid transparent; border-radius: 999px; padding: 2px 8px; font-weight: 800; font-size: 11px; cursor: pointer; opacity: 0.85; }
+.chip:hover { opacity: 1; }
+.chip.active { outline: 2px solid #fff; outline-offset: 1px; opacity: 1; }
+.chip.dim { opacity: 0.35; }
+#picker { background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line); border-radius: 999px; padding: 3px 6px; max-width: 210px; font-size: 11px; cursor: pointer; }
+#picker option, #picker optgroup { background: #1a1d26; color: var(--text); }
+.icon-btn { background: transparent; border: 1px solid transparent; border-radius: 999px; padding: 2px 8px; cursor: pointer; font-size: 13px; display: inline-flex; align-items: center; gap: 4px; }
+.icon-btn span { font-size: 11px; font-weight: 600; }
+.icon-btn:hover { background: rgba(255, 255, 255, 0.12); }
+.icon-btn.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+.icon-btn.close { font-size: 11px; color: var(--dim); padding: 2px 7px; }
+
+#pills { display: flex; flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 6px; align-items: flex-start; max-width: calc(100vw - 16px); }
+#pill-duel { width: 550px; max-width: calc(100vw - 16px); }
+#pill-pressure { width: 300px; }
+#pill-team { width: 380px; }
+.duel-grid { display: grid; grid-template-columns: 260px 1fr; gap: 10px; align-items: center; }
+.duel-grid > div:first-child { min-width: 0; overflow: hidden; }
+.duel-grid .dots { margin: 2px 0 0; justify-content: flex-start; max-width: 250px; gap: 2px; flex-wrap: nowrap; overflow: hidden; }
+.duel-grid .oneliner { margin: 0; }
+.pill { display: none; opacity: 0; transition: opacity var(--fade) var(--ease-out), display var(--fade) allow-discrete; background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--line); border-radius: 14px; padding: 6px 10px 7px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3); max-height: var(--pill-max, 128px); overflow: hidden; }
+.pill.open { display: block; opacity: 1; }
+@starting-style { .pill.open { opacity: 0; } }
+/* hide all is instant: nothing inside a hidden overlay transitions */
+#overlay.hidden, #overlay.hidden * { transition: none !important; animation: none !important; }
+.pill-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); margin-bottom: 3px; white-space: nowrap; }
+.pill-head .tag { color: var(--accent); }
+.pill-head button { background: rgba(255, 255, 255, 0.1); border: 0; border-radius: 999px; color: var(--text); cursor: pointer; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 6px; margin-left: 4px; }
+.pill-head button:hover { color: var(--text); }
+
+.matchup { font-size: 13px; font-weight: 700; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; overflow: hidden; }
+.matchup .r, .matchup .b { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.matchup .vs { color: var(--dim); font-weight: 400; font-size: 11px; }
+.matchup .r { color: var(--win); }
+.matchup .b { color: var(--hold); }
+.tally { display: flex; flex-direction: column; gap: 0; margin: 1px 0 2px; line-height: 1.15; }
+.tally .score { font-size: 12px; font-weight: 700; white-space: nowrap; }
+.tally .score em { font-style: normal; font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; margin: 0 2px; }
+.tally .score .r { color: var(--win); }
+.tally .score .b { color: var(--hold); }
+.tally .who { font-size: 10.5px; color: var(--dim); line-height: 1.2; white-space: nowrap; }
+.tally .who b { color: var(--text); }
+.dots { display: flex; gap: 3px; flex-wrap: wrap; margin-left: auto; max-width: 140px; justify-content: flex-end; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--hold); opacity: 0.85; }
+.dot.w { background: var(--win); }
+.dot.now { outline: 1.5px solid #fff; outline-offset: 1px; }
+.oneliner { font-size: 12.5px; font-weight: 600; line-height: 1.3; background: rgba(255, 255, 255, 0.07); border-left: 3px solid rgba(255, 255, 255, 0.6); border-radius: 6px; padding: 4px 8px; margin: 2px 0 4px; }
+.ctx { font-size: 10.5px; color: var(--dim); margin-top: 4px; line-height: 1.4; }
+.ctx > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctx .ctx-k { font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 2px; }
+.ctx b { color: var(--text); font-weight: 700; }
+.muted { color: var(--dim); font-size: 11px; }
+
+.pr-top { font-size: 12px; font-weight: 700; margin-bottom: 0; line-height: 1.25; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.pr-top .r { color: var(--win); }
+.pr-sub { font-size: 10.5px; color: var(--dim); margin-bottom: 5px; }
+.pr-sub b { color: var(--text); }
+.bars { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+.barrow { display: grid; grid-template-columns: 62px 1fr 22px; gap: 5px; align-items: center; font-size: 10.5px; cursor: pointer; border-radius: 4px; }
+.barrow:hover { background: rgba(255, 255, 255, 0.06); }
+.barrow.sel .nm { color: var(--accent); font-weight: 800; }
+.barrow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track { position: relative; height: 7px; background: rgba(255, 255, 255, 0.1); border-radius: 4px; }
+.track .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--hold); }
+.track .fill.w { background: var(--win); }
+.track .fill.now { background: rgba(255, 255, 255, 0.55); }
+/* the win line is dotted white, the live tick solid white: told apart by pattern, not hue */
+.track .thr { position: absolute; top: -2px; bottom: -2px; width: 2px; background: repeating-linear-gradient(to bottom, #fff 0 2px, transparent 2px 4px); }
+.track .live { position: absolute; top: -3px; width: 2px; height: 13px; background: #fff; border-radius: 1px; }
+.barrow .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); }
+.key-thr, .key-now { display: inline-block; width: 2px; height: 9px; vertical-align: -1px; margin: 0 3px 0 6px; background: repeating-linear-gradient(to bottom, #fff 0 2px, transparent 2px 4px); }
+.key-now { background: #fff; }
+.suggest { background: rgba(255, 255, 255, 0.06); border: 1px dashed var(--accent-line); border-radius: 999px; color: var(--text); font-size: 11px; font-weight: 600; padding: 2px 9px; cursor: pointer; }
+.suggest span { color: var(--dim); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; margin-right: 2px; }
+.suggest:hover { background: var(--accent-soft); }
+.suggest.on { border-style: solid; background: var(--accent-soft); }
+.team-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: -0.5px; }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 14px; }
+.st { display: flex; align-items: baseline; gap: 4px; line-height: 1.25; min-width: 0; white-space: nowrap; }
+.st .sl { font-size: 10px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+.st .sv { font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; margin-left: auto; }
+.st .sv.hi { color: var(--text); }
+.st .sv.lo { color: var(--text); }
+.st .lg { font-size: 9px; color: var(--dim); white-space: nowrap; }
+.cov { font-size: 10px; color: var(--dim); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cov b { color: var(--text); }
+.cov .sl { font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; margin-right: 3px; }
+.ctx .r { color: var(--win); }
+.ctx .b { color: var(--hold); }
+
+@media (max-width: 760px) {
+  #bar { flex-wrap: wrap; justify-content: center; border-radius: 14px; max-width: calc(100vw - 16px); white-space: normal; }
+  .brand, .icon-btn span, .hint { display: none; }
+  .duel-grid, .ctx { grid-template-columns: 1fr; }
+  .pill-head { flex-wrap: wrap; white-space: normal; }
+  .duel-grid { gap: 6px; }
+  #pill-pressure { width: calc(100vw - 16px); }
+  #scorebug { left: 8px; bottom: 8px; }
+  #controls { left: 8px; right: auto; transform: none; bottom: 46px; }
+  .replay-label { left: 8px; right: auto; bottom: 84px; max-width: calc(100vw - 16px); }
+}
+@media (max-width: 1400px) { .hint { display: none; } }
+.duel-grid .oneliner { font-size: 12px; line-height: 1.28; }
+
+/* ---------- broadcast background ---------- */
+.video { position: fixed; left: 0; right: 0; bottom: 0; top: 0; z-index: 1; background: #000; overflow: hidden; }
+.video iframe { position: absolute; border: 0; display: block; pointer-events: none; }
+body.broadcast canvas#field { visibility: hidden; }
+body.broadcast #btnPrev, body.broadcast #btnPlay, body.broadcast #btnNext, body.broadcast #tClock, body.broadcast .hint { display: none; }
+#scorebug, #controls { z-index: 20; }
+.seg { display: inline-flex; background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line); border-radius: 999px; padding: 1px; }
+.seg button { background: none; border: 0; border-radius: 999px; padding: 2px 8px; font-size: 10.5px; font-weight: 600; color: var(--dim); cursor: pointer; }
+.seg button.on { background: rgba(255, 255, 255, 0.9); color: #111; }
+.notice { position: fixed; left: 50%; bottom: 56px; transform: translateX(-50%); z-index: 900; max-width: min(560px, calc(100vw - 24px)); background: rgba(20, 22, 30, 0.92); border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 10px; padding: 8px 12px; font-size: 12px; cursor: pointer; }
+.notice code { background: rgba(255, 255, 255, 0.1); border-radius: 4px; padding: 0 4px; font-size: 11px; }
+
+/* ---------- ▲/▼ markers: orange up, blue down ---------- */
+.up { color: var(--win); }
+.down { color: var(--hold); }
+
+/* ---------- snap points (chrome.js): pills follow the bar's edge ---------- */
+#overlay.snap-left { align-items: flex-start; }
+#overlay.snap-left #pills { justify-content: flex-start; }
+#overlay.snap-right { align-items: flex-end; }
+#overlay.snap-right #pills { justify-content: flex-end; }
+
+/* ---------- solid background fallback (chrome.js) ---------- */
+#solidBtn { font-size: 11px; font-weight: 600; color: var(--dim); }
+#solidBtn.on { color: var(--accent); }
+body.solid #bar, body.solid .pill, body.solid .chrome, body.solid .replay-label, body.solid .notice { background: var(--solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
+
+/* ---------- team colours as small chips: app.js sets --team / --team-ink inline ---------- */
+/* team colour only as a small dot beside the abbreviation */
+.chip, .sb-team { display: inline-flex; align-items: center; gap: 5px; background: rgba(255, 255, 255, 0.08); color: var(--text); }
+.chip::before, .sb-team::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--team, #888); flex: none; }
+.team-dot { background: var(--team, #888); }
+
+/* ---------- bar slots: situation, offense look, defense ---------- */
+.slots { display: flex; gap: 4px; min-width: 0; }
+.slot { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; max-width: 200px; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; }
+.slot-v { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mk { font-style: normal; font-size: 8px; margin: 0 2px 0 3px; }
+.tally .who .r { color: var(--win); }
+.tally .who .b { color: var(--hold); }
+.tally .who .pending { color: var(--dim); }
+#playResult.bad { color: var(--text); }
+/* chrome.js hides the keyboard hint while the bar would cover it */
+body.hint-off .hint { visibility: hidden; }
+.st .ct { font-size: 9.5px; color: var(--dim); }
+/* a subtle, static suggestion: no pulse */
+.icon-btn.suggested { border: 1px dashed var(--accent-line); }
+/* the bar keeps a 5% safe margin each side: it tightens below 1700px and drops the brand and the "Suggested" label below 1500px */
+@media (max-width: 1700px) {
+  #bar { gap: 4px; }
+  #picker { max-width: 130px; }
+  .slot { max-width: 150px; padding: 2px 6px; }
+  .icon-btn { padding: 2px 6px; }
+  .seg button { padding: 2px 6px; }
+  #bar .on-air { font-size: 0; gap: 0; padding: 3px 5px; }
+}
+@media (max-width: 1500px) {
+  .brand, .icon-btn[data-pill=duel] span, .icon-btn[data-pill=team] span { display: none; }
+  #bar { gap: 3px; }
+  .suggest span { letter-spacing: 0.05em; }
+  #picker { max-width: 84px; }
+  .slot { max-width: 110px; }
+  .seg button { padding: 2px 5px; }
+  .icon-btn { padding: 2px 5px; }
+}
+/* the situation always shows in full */
+.slots .slot-sit { max-width: none; }
+
+/* ---------- controller: push to viewers, on-air indicator ---------- */
+/* the push button sits in the duel pill's head: same line height as the other head buttons, so the pill does not grow */
+.push-btn, .pill-head .push-btn { flex: none; background: var(--accent); color: #12141b; border: 0; border-radius: 999px; padding: 1px 8px; font-size: 9px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; }
+.push-btn:hover, .pill-head .push-btn:hover { background: #fff; color: #12141b; }
+.push-btn.on, .pill-head .push-btn.on { background: rgba(255, 138, 61, 0.18); box-shadow: inset 0 0 0 1px var(--win); color: var(--win); }
+.on-air { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 7px; border: 1px solid rgba(255, 138, 61, 0.55); border-radius: 999px; font-size: 9px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--win); white-space: nowrap; }
+.on-air::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--win); }
+.on-air:empty::after { content: "On air"; }
+.on-air[hidden], .push-btn[hidden] { display: none; }
+
+/* ---------- press feedback and focus (controller) ---------- */
+#bar button, #controls button, .pill-head button { transition: transform 160ms var(--ease-out), background-color 160ms ease; }
+#bar button:active, #controls button:active, .pill-head button:active { transform: scale(0.97); }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- viewer: only the broadcast lower-third, the scorebug and the permanent label ---------- */
+body.viewer #overlay, body.viewer #controls, body.viewer #nextPhase, body.viewer #hint, body.viewer #solidBtn, body.viewer #pushDuel, body.viewer #onAir { display: none !important; }
+body.viewer #scorebug { left: var(--safe-x); bottom: var(--safe-y); }
+body.viewer .replay-label { right: var(--safe-x); bottom: var(--safe-y); }
+/* a notice never sits on the lower-third */
+body.viewer .notice { top: var(--safe-y); bottom: auto; }
+
+/* lower-left, above the scorebug, inside the safe margin; narrow enough to stay off the middle of the field */
+.vcard { position: fixed; z-index: 60; left: var(--safe-x); bottom: calc(var(--safe-y) + 44px); width: min(420px, 34vw); min-width: 300px;
+  padding: 12px 16px 10px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.16); border-left: 3px solid rgba(255, 255, 255, 0.55);
+  background: rgba(10, 12, 18, 0.74); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
+  color: var(--text); opacity: 1; transform: none; transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out); }
+/* enters with a short fade and rise; leaves instantly when pulled (hidden or emptied: no exit animation) */
+@starting-style { .vcard { opacity: 0; transform: translateY(8px); } }
+.vcard[hidden], .vcard:empty { display: none; }
+body.solid .vcard { background: var(--solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
+.vc-head { display: flex; align-items: baseline; gap: 8px; font-size: 15px; font-weight: 800; line-height: 1.2; white-space: nowrap; overflow: hidden; }
+.vc-head .vc-r, .vc-head .vc-b { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.vc-r { color: var(--win); }
+.vc-b { color: var(--hold); }
+.vc-vs { flex: none; font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
+.vc-tally { display: flex; align-items: baseline; gap: 8px; margin: 4px 0 6px; line-height: 1; font-size: 26px; font-weight: 700; color: var(--dim); }
+.vc-tally .vc-n:first-child { color: var(--win); }
+.vc-tally .vc-n:nth-child(2) { color: var(--hold); }
+.vc-n { font-size: 36px; font-weight: 800; letter-spacing: -0.01em; }
+.vc-reps { font-size: 12px; font-weight: 600; color: var(--dim); margin-left: 2px; }
+.vc-line { font-size: 18px; font-weight: 600; line-height: 1.35; color: var(--text); text-wrap: pretty; }
+.vc-dots { display: flex; flex-wrap: wrap; gap: 3px; margin: 8px 0 6px; }
+.vc-dots .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--hold); opacity: 0.9; }
+.vc-dots .dot.win { background: var(--win); }
+.vc-dots .dot.hold { background: var(--hold); }
+.vc-src { font-size: 10px; letter-spacing: 0.04em; color: var(--dim); line-height: 1.3; }
+@media (max-width: 760px) { .vcard { width: calc(100vw - 2 * var(--safe-x)); min-width: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  @starting-style { .vcard { transform: none; } }
+  #bar button:active, #controls button:active, .pill-head button:active { transform: none; }
+}
+
+/* ---------- bigger, calmer type: one text weight (600), heavy only for numbers ---------- */
+#bar { gap: 8px; padding: 5px 10px 5px 6px; }
+#bar .slot, #bar .icon-btn span, #picker, .suggest, #bar .push-btn { font-size: 14px; font-weight: 600; }
+.chip { font-size: 13px; font-weight: 700; padding: 3px 10px 3px 8px; opacity: 1; }
+.chip.dim { opacity: 0.45; }
+.chip.active { outline: 1.5px solid var(--text); outline-offset: 1px; }
+.seg button { font-size: 13px; padding: 3px 10px; }
+.slot { padding: 3px 10px; max-width: 240px; }
+.icon-btn { font-size: 15px; padding: 3px 10px; }
+.suggest { padding: 3px 12px; }
+.suggest span { font-size: 10px; }
+#picker { max-width: 190px; padding: 4px 8px; }
+#solidBtn { font-size: 13px; }
+.brand { font-size: 12px; }
+#scorebug, .replay-label, #controls { font-size: 14px; }
+#controls button { font-size: 13px; padding: 4px 10px; }
+.sb-team { padding: 2px 8px 2px 6px; }
+
+/* pills float over the field: wider, solid-enough glass, no height clip */
+.pill { max-height: none; padding: 10px 14px 12px; border-radius: 14px; }
+#pill-duel { width: 640px; }
+#pill-pressure { width: 360px; }
+#pill-team { width: 440px; }
+.duel-grid { grid-template-columns: 300px 1fr; gap: 14px; }
+.duel-grid .dots { max-width: 290px; }
+.pill-head { font-size: 11px; margin-bottom: 6px; }
+.pill-head button, .pill-head .push-btn { font-size: 11px; padding: 3px 10px; }
+.matchup { font-size: 16px; }
+.matchup .vs { font-size: 13px; }
+.tally .score { font-size: 15px; }
+.tally .score em { font-size: 32px; }
+.tally .who { font-size: 13px; }
+.dot { width: 8px; height: 8px; }
+.oneliner, .duel-grid .oneliner { font-size: 16.5px; line-height: 1.35; padding: 6px 10px; }
+.ctx { font-size: 13px; margin-top: 8px; }
+.ctx .ctx-k { font-size: 10px; }
+.pr-top { font-size: 15px; }
+.pr-sub { font-size: 13px; }
+.barrow { font-size: 13px; grid-template-columns: 80px 1fr 30px; }
+.track { height: 9px; }
+.st .sl { font-size: 13px; }
+.st .sv { font-size: 14px; }
+.st .ct, .st .lg { font-size: 11.5px; }
+.cov { font-size: 12.5px; margin-top: 6px; }
+.stats { gap: 4px 18px; }
+
+/* the primary action reads first */
+.pill-head .push-btn { font-size: 12px; padding: 4px 12px; }
+
+/* viewer lower-third: the line is the thing people read */
+.vc-line { font-size: 20px; }
+.vcard { width: min(460px, 36vw); }
+
+/* the bar keeps only what the streamer needs to act: the offense/defense slots go below 1700px, Solid below 1400px */
+@media (max-width: 1700px) {
+  .slot-off, .slot-def { display: none; }
+  #picker { max-width: 150px; }
+}
+@media (max-width: 1400px) {
+  #bar { gap: 6px; }
+  #solidBtn { display: none; }
+  #picker { max-width: 120px; }
+  .seg button { padding: 3px 8px; }
+  .icon-btn { padding: 3px 8px; }
+}
+
+/* craft floor: no thick left rules on callouts, no tracked-caps kicker over the pill content */
+.oneliner, .duel-grid .oneliner { border-left: 0; background: rgba(255, 255, 255, 0.08); border-radius: 8px; }
+.vcard { border-left: 1px solid rgba(255, 255, 255, 0.16); }
+.pill-head { font-size: 12px; letter-spacing: 0; text-transform: none; }
+.pill-head .push-btn { text-transform: none; letter-spacing: 0; }
