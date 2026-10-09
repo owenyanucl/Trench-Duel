@@ -6,8 +6,14 @@ Positions only: it shows where he was between the snap and the throw or sack, no
     python heatmaps.py --player 44903 --game 2021100305
 
 writes output/heatmap_<lastname>_<gameId>.png and .txt.
+
+    python heatmaps.py --overlay --game 2021100305
+
+writes overlay/data/heat.js: every player tracked in that game who has 5+ plays on the same side of
+the ball in earlier weeks, with his frame counts per square yard from the line of scrimmage.
 """
 import argparse
+import json
 import os
 
 import matplotlib
@@ -34,6 +40,12 @@ BIN = 1.0
 SMOOTH_SIGMA = 1.2  # yards
 SMALL_SAMPLE = 5
 
+# Overlay grid: downfield (x) by across (y = y - ball_y, offense's left positive), raw frame counts.
+OVERLAY_HEAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "overlay", "data", "heat.js")
+HEAT_GRID = 1  # yards per cell
+HEAT_DOWN = (-15, 35)
+HEAT_ACROSS = (-25, 25)
+
 # Sequential blue ramp (dataviz reference palette), light surface.
 SURFACE = "#fcfcfb"
 INK = "#1f1f1e"
@@ -58,6 +70,27 @@ def snap_and_end(events):
     return snap_frame, int(after.min()), True
 
 
+def read_tracking(gid):
+    return pd.read_csv(os.path.join(DATA, "tracking", f"tracking_{gid}.csv"),
+                       usecols=["playId", "nflId", "frameId", "team", "playDirection", "x", "y", "event"])
+
+
+def normalise(play):
+    """One play's tracking flipped so the offense moves toward +x, with its snap-to-end window and
+    the ball's spot at the snap: (play, snap_frame, end_frame, ended_by_event, ball_x, ball_y),
+    or None when the play has no snap or no ball at the snap."""
+    se = snap_and_end(play[["frameId", "event"]].drop_duplicates("frameId"))
+    if se is None:
+        return None
+    snap_frame, end_frame, ended = se
+    left = play.playDirection.iloc[0] == "left"
+    play = play.assign(x=np.where(left, 120.0 - play.x, play.x), y=np.where(left, FIELD_WIDTH - play.y, play.y))
+    ball = play[(play.team == "football") & (play.frameId == snap_frame)]
+    if ball.empty:
+        return None
+    return play, snap_frame, end_frame, ended, float(ball.x.iloc[0]), float(ball.y.iloc[0])
+
+
 def player_frames(player, game_ids, plays, pff):
     """Frames from snap to throw/sack for every defensive snap of `player`, in LOS-relative yards."""
     on_d = pff[(pff.nflId == player) & pff.pff_role.isin(DEFENSE_ROLES) & pff.gameId.isin(game_ids)]
@@ -66,24 +99,16 @@ def player_frames(player, game_ids, plays, pff):
     rows = []
     per_play = []
     for gid in sorted(game_ids):
-        t = pd.read_csv(os.path.join(DATA, "tracking", f"tracking_{gid}.csv"),
-                        usecols=["playId", "nflId", "frameId", "team", "playDirection", "x", "y", "event"])
+        t = read_tracking(gid)
         t = t[[(gid, p) in keys for p in t.playId]]
         for pid, play in t.groupby("playId"):
-            events = play[["frameId", "event"]].drop_duplicates("frameId")
-            se = snap_and_end(events)
-            if se is None:
+            norm = normalise(play)
+            if norm is None:
                 continue
-            snap_frame, end_frame, ended = se
-            left = play.playDirection.iloc[0] == "left"
-            x = np.where(left, 120.0 - play.x, play.x)
-            y = np.where(left, FIELD_WIDTH - play.y, play.y)
-            play = play.assign(x=x, y=y)
-            ball = play[(play.team == "football") & (play.frameId == snap_frame)]
+            play, snap_frame, end_frame, ended, bx, by = norm
             me = play[(play.nflId == player) & play.frameId.between(snap_frame, end_frame)]
-            if ball.empty or me.empty:
+            if me.empty:
                 continue
-            bx, by = float(ball.x.iloc[0]), float(ball.y.iloc[0])
             down = me.x.to_numpy() - bx
             # Viewed from behind the offense: offense's left (+y) on the left of the picture.
             across = -(me.y.to_numpy() - by)
@@ -146,14 +171,94 @@ def permutation_p(a, b, n=20000, seed=0):
     return (hits + 1) / (n + 1)
 
 
+def side_of(roles):
+    """Side of the ball for a run of PFF roles: defense when most are Coverage or Pass Rush."""
+    return "defense" if roles.isin(DEFENSE_ROLES).mean() >= 0.5 else "offense"
+
+
+def overlay_heat(game_id, players, games, pff):
+    """Baseline heat grids for every player tracked in `game_id`: frame counts per cell, snap to
+    throw or sack, on the side of the ball he plays tonight, over every earlier week."""
+    nx = int((HEAT_DOWN[1] - HEAT_DOWN[0]) / HEAT_GRID)
+    ny = int((HEAT_ACROSS[1] - HEAT_ACROSS[0]) / HEAT_GRID)
+    week = int(games.loc[games.gameId == game_id, "week"].iloc[0])
+    base_games = games[games.week < week]
+    tonight = read_tracking(game_id)
+    teams = tonight.dropna(subset=["nflId"]).astype({"nflId": int}).groupby("nflId").team.first()
+    sides = pff[pff.gameId == game_id].groupby("nflId").pff_role.apply(side_of)
+    sides = sides[sides.index.isin(teams.index)]
+
+    base = pff[pff.gameId.isin(base_games.gameId) & pff.nflId.isin(sides.index)]
+    base = base[base.pff_role.isin(DEFENSE_ROLES) == (base.nflId.map(sides) == "defense")]
+    on_play = base.groupby(["gameId", "playId"]).nflId.apply(set)
+
+    acc = {nid: {"plays": 0, "frames": 0, "cells": np.zeros((ny, nx), dtype=np.int64),
+                 "depths": [], "across": 0.0} for nid in sides.index}
+    for gid in sorted(base.gameId.unique()):
+        t = read_tracking(gid)
+        wanted = on_play.loc[gid]
+        t = t[t.playId.isin(wanted.index)]
+        for pid, play in t.groupby("playId"):
+            norm = normalise(play)
+            if norm is None:
+                continue
+            play, snap_frame, end_frame, ended, bx, by = norm
+            seg = play[play.nflId.isin(wanted.loc[pid]) & play.frameId.between(snap_frame, end_frame)]
+            for nid, me in seg.groupby("nflId"):
+                down = me.x.to_numpy() - bx
+                across = me.y.to_numpy() - by
+                ix = np.clip(np.floor((down - HEAT_DOWN[0]) / HEAT_GRID).astype(int), 0, nx - 1)
+                iy = np.clip(np.floor((across - HEAT_ACROSS[0]) / HEAT_GRID).astype(int), 0, ny - 1)
+                a = acc[nid]
+                np.add.at(a["cells"], (iy, ix), 1)
+                a["plays"] += 1
+                a["frames"] += len(me)
+                a["across"] += float(across.sum())
+                end_row = me.frameId.to_numpy() == end_frame
+                if ended and end_row.any():
+                    a["depths"].append(float(down[end_row][0]))
+
+    names = players.set_index("nflId")
+    out = {}
+    for nid, a in sorted(acc.items()):
+        if a["plays"] < SMALL_SAMPLE:
+            continue
+        out[str(int(nid))] = {
+            "name": names.loc[nid, "displayName"], "pos": names.loc[nid, "officialPosition"],
+            "team": teams.loc[nid], "side": sides.loc[nid],
+            "baseline": {
+                "plays": a["plays"], "frames": a["frames"], "cells": a["cells"].ravel().tolist(),
+                "avgDepthAtEnd": round(float(np.mean(a["depths"])), 1) if a["depths"] else None,
+                "depthPlays": len(a["depths"]),
+                "avgAcross": round(a["across"] / a["frames"], 1),
+            },
+        }
+    meta = {"gameId": int(game_id), "gridYd": HEAT_GRID, "xMin": HEAT_DOWN[0], "xMax": HEAT_DOWN[1],
+            "yMin": HEAT_ACROSS[0], "yMax": HEAT_ACROSS[1],
+            "weeks": sorted(int(w) for w in base_games.week.unique()),
+            "note": "positions from snap to throw or sack, passing plays, yards from the line of scrimmage"}
+    return {"meta": meta, "players": out}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--player", type=int, default=44903, help="nflId (default: John Johnson III)")
     ap.add_argument("--game", type=int, default=2021100305, help="gameId tonight (default: CLE @ MIN, week 4)")
+    ap.add_argument("--overlay", action="store_true",
+                    help="write the overlay's baseline grids for every player in --game to overlay/data/heat.js")
     args = ap.parse_args()
 
     players = pd.read_csv(os.path.join(DATA, "players.csv"))
     games = pd.read_csv(os.path.join(DATA, "games.csv"))
+    if args.overlay:
+        pff = pd.read_csv(os.path.join(DATA, "pffScoutingData.csv"), usecols=["gameId", "playId", "nflId", "pff_role"])
+        heat = overlay_heat(args.game, players, games, pff)
+        os.makedirs(os.path.dirname(OVERLAY_HEAT), exist_ok=True)
+        with open(OVERLAY_HEAT, "w") as fh:
+            fh.write("window.TRENCH_HEAT = " + json.dumps(heat, separators=(",", ":")) + ";\n")
+        print(f"wrote {OVERLAY_HEAT}: {len(heat['players'])} players, {os.path.getsize(OVERLAY_HEAT):,} bytes")
+        return
+
     plays = pd.read_csv(os.path.join(DATA, "plays.csv"), usecols=["gameId", "playId", "quarter", "defensiveTeam"])
     pff = pd.read_csv(os.path.join(DATA, "pffScoutingData.csv"), usecols=["gameId", "playId", "nflId", "pff_role"])
 

@@ -102,8 +102,22 @@
   // ---------- state ----------
   var S = {
     i: 0, frame: 0, playing: !VIEWER, last: 0, endAt: 0, afterAt: 0, after: false, openedAt: {}, pushed: null, clearedAt: 0,
-    overlay: true, pills: { duel: false, pressure: false, team: false },
+    overlay: true, pills: { duel: false, pressure: false, team: false, heat: false },
     selected: null, pair: null, team: null, bg: 'replay'
+  };
+  // Hook for panels kept in their own files (heat.js): the replay state, the spoiler-safe ready rule,
+  // and callbacks run after every overlay render.
+  window.TD = {
+    get state() { return S; },
+    plays: plays,
+    players: T.players,
+    selected: function () { return S.selected; },
+    // earlier plays always; the play on screen once the tracking up to `frame` (default: the throw or sack) has arrived
+    isReady: function (k, frame) {
+      if (k !== S.i) return k < S.i;
+      return S.after || effFrame() >= (frame == null ? plays[k].endFrame : frame) + DATA_LATENCY_FRAMES;
+    },
+    onRender: []
   };
 
   // ---------- duel logic (spoiler-safe: plays[0..S.i] only) ----------
@@ -717,10 +731,11 @@
     renderChrome();
     if (!dragged) placeOverlayDefault();
     postState();
+    window.TD.onRender.forEach(function (fn) { fn(); });
   }
   function hideAll() {
     // the panic button also pulls whatever is on the stream
-    S.overlay = false; S.pills.duel = false; S.pills.pressure = false; S.pills.team = false; S.team = null; S.pushed = null;
+    S.overlay = false; S.pills.duel = false; S.pills.pressure = false; S.pills.team = false; S.pills.heat = false; S.team = null; S.pushed = null;
     renderChips(); renderPicker(); renderOverlay(); draw();
   }
   function showOverlay() { S.overlay = true; renderOverlay(); draw(); }
@@ -919,6 +934,7 @@
     }
     S.pills.pressure = hash.pressure === '1';
     S.pills.duel = hash.duel === '1';
+    S.pills.heat = hash.heat === '1';
     S.openedAt = { duel: performance.now(), pressure: performance.now(), team: performance.now() };
     if (S.pills.duel && S.selected == null && !S.pair && hl) S.pair = { r: hl[0], b: hl[1] };
     if (hash.team && teams.indexOf(hash.team) >= 0) { S.team = hash.team; S.pills.team = true; }
