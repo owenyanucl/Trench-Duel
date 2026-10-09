@@ -2,11 +2,39 @@
 
 **Trench Duel** is a live overlay that lets NFL co-streamers show the battle in the trenches: every pass rusher against the lineman blocking him, scored rep by rep as the game unfolds. Streamers get a private control desk that fills in each matchup, its context and a ready-to-say line the moment the tracking data lands, so they stay on the game and choose exactly which story their viewers see and when. Viewers see only what the streamer pushes, landing between plays instead of over them, like "Garrett has beaten Hill on 6 of 29 reps tonight." It turns the hardest part of football to see into a storyline casual fans can follow and regulars can argue over, giving each stream's community something to rally around between snaps. For the NFL, it makes creator co-streams a place where fans learn the game while they're entertained, using the league's own tracking data to bring new audiences in through the voices they already trust.
 
-![The streamer's private controller: Garrett beats Hill late in the 4th quarter](output/overlay_screenshot.png)
+## How it works, in pictures
 
-![What viewers see: only the card the streamer pushed](output/viewer_screenshot.png)
+**1. A livestream with the streamer's private controller on top.** The game plays full screen; the streamer's bar and cards float over the top edge.
 
-![Top rushers](output/top_rushers.png)
+![Controller over a broadcast clip of this game](output/livestream_screenshot.jpg)
+
+**2. Before the snap: everything collapsed.** One bar shows the situation, the offense's look and the defense's blitz tendency, plus a suggested matchup to watch.
+
+![Pre-snap: collapsed controller with a suggested duel](output/step_presnap.png)
+
+**3. During the play: nothing is spoiled.** The duel reads "pending" until the tracking data can know the result.
+
+![Live play: the result is pending](output/step_live.png)
+
+**4. After the play: the result and the story.** Garrett has beaten Hill on 6 of 22 reps, with a ready-to-say line, the context from earlier weeks and the pressure story.
+
+![After the play: duel tally, one-liner and pressure story](output/overlay_screenshot.png)
+
+**5. What viewers see: only what the streamer pushes.** One click on "Push to stream" puts the duel card on the viewer screen; it clears at the next snap.
+
+![Viewer screen with the pushed duel card](output/viewer_screenshot.png)
+
+**6. Team tendencies, with a count beside every percentage.**
+
+![Team pill: Cleveland's tendencies before tonight](output/step_team.png)
+
+**7. Who wins their reps most often.** Pass rushers ranked by reps won beyond what's expected for where they line up.
+
+![Top rushers over expectation](output/top_rushers.png)
+
+**8. Where a player is lining up tonight vs before.** A coverage heat map for a future in-game form card.
+
+![John Johnson III coverage heat map](output/heatmap_johnson_2021100305.png)
 
 ## Run it
 
