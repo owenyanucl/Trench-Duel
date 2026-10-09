@@ -10,6 +10,21 @@
     LA: '#2E5FB3', LAC: '#0080C6', LV: '#A5ACAF', MIA: '#008E97', MIN: '#6B3FB0', NE: '#1D3B6F', NO: '#D3BC8D', NYG: '#1F3C99',
     NYJ: '#E8E8E8', PHI: '#00818C', PIT: '#FFB612', SEA: '#69BE28', SF: '#AA0000', TB: '#D50A0A', TEN: '#4B92DB', WAS: '#7A1F1F'
   };
+  var TEAM_NAME = {
+    ARI: 'Arizona', ATL: 'Atlanta', BAL: 'Baltimore', BUF: 'Buffalo', CAR: 'Carolina', CHI: 'Chicago', CIN: 'Cincinnati', CLE: 'Cleveland',
+    DAL: 'Dallas', DEN: 'Denver', DET: 'Detroit', GB: 'Green Bay', HOU: 'Houston', IND: 'Indianapolis', JAX: 'Jacksonville', KC: 'Kansas City',
+    LA: 'The Rams', LAC: 'The Chargers', LV: 'Las Vegas', MIA: 'Miami', MIN: 'Minnesota', NE: 'New England', NO: 'New Orleans', NYG: 'The Giants',
+    NYJ: 'The Jets', PHI: 'Philadelphia', PIT: 'Pittsburgh', SEA: 'Seattle', SF: 'San Francisco', TB: 'Tampa Bay', TEN: 'Tennessee', WAS: 'Washington'
+  };
+  var PILL_MAX = 140; // px: every pill is designed to fit this height; the field starts below it
+  // Broadcast mode: real footage of one play in this game, shown behind the overlay.
+  var BROADCAST = {
+    playId: 2349,
+    src: 'https://www.youtube-nocookie.com/embed/e7VpmQzDL4k?autoplay=1&mute=1&controls=0&playsinline=1&loop=1&playlist=e7VpmQzDL4k&cc_load_policy=0&rel=0&modestbranding=1',
+    tag: 'BROADCAST CLIP',
+    label: 'Cleveland Browns YouTube · CLE @ MIN 2021 Wk 4, play shown: Q3 11:29 McKinley sack',
+    fileNotice: 'Broadcast mode needs a local server: <code>python3 -m http.server 8000 -d overlay</code>, then open <code>http://localhost:8000</code>'
+  };
   var RESULT = { C: 'Complete', I: 'Incomplete', S: 'Sack', IN: 'Interception', R: 'Scramble' };
   var SUFFIX = { JR: 1, 'JR.': 1, SR: 1, 'SR.': 1, II: 1, III: 1, IV: 1, V: 1 };
 
@@ -65,8 +80,8 @@
   // ---------- state ----------
   var S = {
     i: 0, frame: 0, playing: true, holdUntil: 0, last: 0, acc: 0,
-    overlay: true, pills: { duel: true, pressure: false },
-    selected: null, teamFilter: null
+    overlay: true, pills: { duel: false, pressure: false, team: false },
+    selected: null, pair: null, team: null, bg: 'replay'
   };
 
   // ---------- duel logic (spoiler-safe: plays[0..S.i] only) ----------
@@ -101,6 +116,10 @@
   // The duel shown: { rusherId, blockerId, mode, onPlay (duel object on current play or null) }
   function currentDuel() {
     var play = plays[S.i];
+    if (S.pair) {
+      var pd = play.duels.filter(function (d) { return d.rusherId == S.pair.r && d.blockerId == S.pair.b; })[0] || null;
+      return { rusherId: S.pair.r, blockerId: S.pair.b, mode: 'pair', onPlay: pd };
+    }
     if (S.selected != null) {
       var id = S.selected;
       var mine = play.duels.filter(function (d) { return d.rusherId == id || d.blockerId == id; });
@@ -123,11 +142,14 @@
   }
 
   // ---------- canvas / field ----------
-  var cv = $('field'), ctx = cv.getContext('2d'), dpr = 1, view = { s: 10, ox: 0, oy: 0 };
+  var cv = $('field'), ctx = cv.getContext('2d'), dpr = 1, view = { s: 10, ox: 0, oy: 0 }, barH = 34;
+  document.documentElement.style.setProperty('--pill-max', PILL_MAX + 'px');
   function resize() {
     dpr = window.devicePixelRatio || 1;
     cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
-    var padX = 16, top = Math.round(Math.min(210, Math.max(96, innerHeight * 0.25))), bottom = innerWidth <= 760 ? 124 : 52;
+    if (S.overlay && $('bar').offsetHeight) barH = $('bar').offsetHeight;
+    // reserve a band for the bar and one row of pills so an open pill never covers the field
+    var padX = 16, top = innerWidth <= 760 ? 96 : 10 + barH + 6 + PILL_MAX + 8, bottom = innerWidth <= 760 ? 124 : 52;
     var s = Math.min((innerWidth - 2 * padX) / 120, (innerHeight - top - bottom) / 53.3);
     view.s = s;
     view.ox = (innerWidth - 120 * s) / 2;
@@ -200,7 +222,7 @@
     var s = view.s, r = Math.max(5, s * 0.95), font = getComputedStyle(document.body).fontFamily;
     var pos = {};
     play.players.forEach(function (p) { pos[p.nflId] = lerpXY(p.xy, f); });
-    var duel = S.overlay ? currentDuel() : null;
+    var duel = S.overlay && S.pills.duel ? currentDuel() : null;
     var ringR = duel && duel.onPlay ? duel.rusherId : null, ringB = duel && duel.onPlay ? duel.blockerId : null;
     var ringOnly = duel && duel.only != null && pos[duel.only] ? duel.only : null;
     if (duel && !duel.onPlay && S.selected != null && pos[S.selected]) ringOnly = S.selected;
@@ -232,7 +254,7 @@
       var cx = X(pos[id][0]), cy = Y(pos[id][1]), isR = id == ringR;
       ctx.strokeStyle = isR ? '#ff5a4e' : id == ringB ? '#4fc3ff' : '#ffcf3f';
       ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(cx, cy, r + 4, 0, Math.PI * 2); ctx.stroke();
-      var label = lastName(id) + (isR && qbDist != null ? ' · ' + qbDist.toFixed(1) + ' yd to QB' : '');
+      var label = lastName(id) + (isR && qbDist != null ? ' · ' + qbDist.toFixed(1) + ' yd to QB now' : '');
       ctx.font = '700 11px ' + font; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       var w = ctx.measureText(label).width + 12, ly = isR ? cy - r - 26 : cy + r + 10;
       ctx.fillStyle = 'rgba(0,0,0,0.78)'; roundRect(cx - w / 2, ly, w, 16, 8); ctx.fill();
@@ -279,17 +301,23 @@
     teams.forEach(function (t) {
       var b = el('button', 'chip', esc(t));
       b.style.background = teamColor(t); b.style.color = inkOn(teamColor(t));
-      b.title = 'Filter players to ' + t;
-      if (S.teamFilter === t) b.classList.add('active');
-      else if (S.teamFilter) b.classList.add('dim');
-      b.onclick = function () { S.teamFilter = S.teamFilter === t ? null : t; renderChips(); renderPicker(); };
+      b.title = TEAM_NAME[t] ? TEAM_NAME[t] + ': team pill, players filtered to ' + t : t;
+      var focus = teamFocus();
+      if (focus === t) b.classList.add('active');
+      else if (focus) b.classList.add('dim');
+      b.onclick = function () { setTeam(teamFocus() === t ? null : t); };
       box.appendChild(b);
     });
   }
+  function teamFocus() { return S.pills.team ? S.team : null; }
+  function setTeam(t) {
+    S.team = t; S.pills.team = !!t;
+    renderChips(); renderPicker(); renderOverlay();
+  }
   function renderPicker() {
     picker.innerHTML = '';
-    var auto = el('option', null, 'Auto · headline duel'); auto.value = ''; picker.appendChild(auto);
-    teams.filter(function (t) { return !S.teamFilter || S.teamFilter === t; }).forEach(function (t) {
+    var auto = el('option', null, 'Pick a player…'); auto.value = ''; picker.appendChild(auto);
+    teams.filter(function (t) { return !teamFocus() || teamFocus() === t; }).forEach(function (t) {
       var ids = Object.keys(duelPlayers).filter(function (id) { return P(id).team === t; });
       var rush = ids.filter(isRusher), block = ids.filter(function (id) { return !isRusher(id); });
       [['rushers', rush], ['blockers', block]].forEach(function (g) {
@@ -305,11 +333,24 @@
     if (picker.value !== (S.selected != null ? String(S.selected) : '')) picker.value = '';
   }
   picker.addEventListener('change', function () {
-    S.selected = picker.value ? +picker.value : null;
+    S.selected = picker.value ? +picker.value : null; S.pair = null;
+    if (S.selected != null) S.pills.duel = true;
     picker.blur(); renderOverlay(); draw();
   });
   document.querySelectorAll('.icon-btn[data-pill]').forEach(function (b) {
-    b.addEventListener('click', function () { var k = b.getAttribute('data-pill'); S.pills[k] = !S.pills[k]; renderOverlay(); });
+    b.addEventListener('click', function () {
+      var k = b.getAttribute('data-pill');
+      if (k === 'team') { setTeam(S.pills.team ? null : (S.team || plays[S.i].defense)); return; }
+      S.pills[k] = !S.pills[k]; renderOverlay(); draw();
+    });
+  });
+  // Suggested matchup: the pair that meets most often in this game. Nothing is selected until it is clicked.
+  var hl = headline ? headline.split('|').map(Number) : null;
+  if (hl) $('suggest').innerHTML = '<span>Suggested</span> ' + esc(lastName(hl[0])) + ' vs ' + esc(lastName(hl[1]));
+  else $('suggest').hidden = true;
+  $('suggest').addEventListener('click', function () {
+    S.pair = { r: hl[0], b: hl[1] }; S.selected = null; S.pills.duel = true;
+    renderPicker(); renderOverlay(); draw();
   });
   $('barClose').addEventListener('click', hideAll);
   $('btnHide').addEventListener('click', function () { if (S.overlay) hideAll(); else showOverlay(); });
@@ -319,8 +360,9 @@
     var box = $('pill-duel');
     var d = currentDuel();
     var head = '<div class="pill-head"><span>Trench duel · <span class="tag">' +
-      (d.mode === 'pinned' ? 'your pick' : d.mode === 'headline' ? 'headline matchup' : 'closest rush this play') + '</span></span>' +
-      (S.selected != null ? '<button data-act="auto">Reset to auto ✕</button>' : '<span>tonight · spoiler-safe</span>') + '</div>';
+      (d.mode === 'pinned' ? 'your pick' : d.mode === 'pair' || d.mode === 'headline' ? 'suggested matchup' : 'closest rush this play') + '</span></span>' +
+      '<span>spoiler-safe · win = within ' + league.thresholdYds + ' yd of QB in ' + league.windowSec + 's' +
+      (S.selected != null || S.pair ? ' <button data-act="auto">Clear ✕</button>' : '') + '</span></div>';
     if (d.rusherId == null) {
       var who = d.only != null ? esc(tagName(d.only)) + ' has no trench reps yet tonight.' : 'No pass-rush duels on this play.';
       box.innerHTML = head + '<div class="muted">' + who + '</div>';
@@ -334,28 +376,27 @@
     if (t.reps === 0) line = rL + ' and ' + bL + ' have not met yet tonight.';
     else if (t.wins === 0) line = bL + ' has stonewalled ' + rL + (t.reps === 1 ? ' on their only rep' : ' on all ' + reps) + ' tonight; ' + avg + '.';
     else line = rL + ' has beaten ' + bL + ' on ' + t.wins + ' of ' + reps + ' tonight; ' + avg + '.';
-    var thisRep = d.onPlay ? (d.onPlay.rusherWon ? '<b style="color:var(--win)">' + rL + ' won</b>' : '<b style="color:var(--hold)">' + bL + ' held</b>') : '<span>not matched up</span>';
+    var thisRep = d.onPlay ? (d.onPlay.rusherWon ? '<b style="color:var(--win)">rusher won</b>' : '<b style="color:var(--hold)">blocker held</b>') : '<span>not matched</span>';
     var sr = T.season[r], sb = T.season[b];
     var rt = playerTally(r, true), bt = playerTally(b, false);
     var dots = t.seq.map(function (x) { return '<i class="dot' + (x.w ? ' w' : '') + (x.now ? ' now' : '') + '"></i>'; }).join('');
-    var rSeason = sr ? 'season (wks 1–8) wins <b>' + pct(sr.winRate) + '</b> of ' + sr.reps + ' reps, <b>' + times(sr.winRate, expectedOf(r)) + '</b> what\'s expected for ' + ALIGN_ONE[rAlign] : 'no season data';
-    var bSeason = sb ? 'season (wks 1–8) loses <b>' + pct(sb.winRate) + '</b> of ' + sb.reps + ' reps, <b>' + times(sb.winRate, expectedOf(b)) + '</b> what\'s expected where he lines up' : 'no season data';
+    var rSeason = sr ? 'wins <b>' + pct(sr.winRate) + '</b> of ' + sr.reps + ' reps, <b>' + times(sr.winRate, expectedOf(r)) + '</b> what\'s expected for ' + ALIGN_ONE[rAlign] : 'no season data';
+    var bSeason = sb ? 'loses <b>' + pct(sb.winRate) + '</b> of ' + sb.reps + ' reps, <b>' + times(sb.winRate, expectedOf(b)) + '</b> what\'s expected where he lines up' : 'no season data';
     box.innerHTML = head +
       '<div class="duel-grid"><div>' +
       '<div class="matchup"><span class="r">' + esc(tagName(r)) + '</span><span class="vs">vs</span><span class="b">' + esc(tagName(b)) + '</span></div>' +
-      '<div class="tally"><div class="score"><span class="r">' + rL + ' ' + t.wins + '</span>–<span class="b">' + (t.reps - t.wins) + ' ' + bL + '</span></div>' +
-      '<div class="who">' + t.reps + ' rep' + (t.reps === 1 ? '' : 's') + '<br>this play: ' + thisRep + '</div></div>' +
+      '<div class="tally"><div class="score"><span class="r">' + rL + ' <em>' + t.wins + '</em></span><em>–</em><span class="b"><em>' + (t.reps - t.wins) + '</em> ' + bL + '</span></div>' +
+      '<div class="who">' + t.reps + ' rep' + (t.reps === 1 ? '' : 's') + ' · this play: ' + thisRep + '</div></div>' +
       '<div class="dots" title="Each rep tonight, oldest first. Red = rusher won.">' + dots + '</div>' +
       '</div><div class="oneliner">' + line + '</div></div>' +
       '<div class="ctx">' +
-      '<div><span class="r">●</span> <b>' + rL + '</b> · tonight ' + rt.wins + '/' + rt.reps + ' vs all · ' + rSeason + '</div>' +
-      '<div><span class="b">●</span> <b>' + bL + '</b> · tonight lost ' + bt.wins + '/' + bt.reps + ' · ' + bSeason + '</div>' +
-      '<div class="full">Win = rusher within ' + league.thresholdYds + ' yds of the QB inside ' + league.windowSec + 's of the snap. Tally counts only plays shown so far.</div>' +
+      '<div title="Tonight vs all blockers: ' + rt.wins + ' of ' + rt.reps + '"><span class="r">●</span> <b>' + rL + '</b> <span class="ctx-k">season wks 1–8</span> ' + rSeason + '</div>' +
+      '<div title="Tonight vs all rushers: lost ' + bt.wins + ' of ' + bt.reps + '"><span class="b">●</span> <b>' + bL + '</b> <span class="ctx-k">season wks 1–8</span> ' + bSeason + '</div>' +
       '</div>';
   }
   function renderPressure() {
     var box = $('pill-pressure'), play = plays[S.i];
-    var head = '<div class="pill-head"><span>Pressure · this play</span><span>' + play.duels.length + ' duels</span></div>';
+    var head = '<div class="pill-head"><span>Pressure · this play</span><span><i class="key-thr"></i>' + league.thresholdYds + '-yd win line <i class="key-now"></i>now</span></div>';
     if (!play.duels.length) { box.innerHTML = head + '<div class="muted">No duels recorded on this play.</div>'; return; }
     // one row per rusher (double teams collapse)
     var rows = {}, order = [];
@@ -368,8 +409,8 @@
     var qb = play.players.filter(function (p) { return p.nflId == play.qbId; })[0];
     var qxy = qb ? lerpXY(qb.xy, S.frame) : null;
     var tp = top.secToPressure != null
-      ? 'pressure at <b>' + top.secToPressure.toFixed(1) + 's</b>'
-      : 'no pressure inside ' + league.windowSec + 's';
+      ? 'within ' + league.thresholdYds + ' yd at <b>' + top.secToPressure.toFixed(1) + 's</b>'
+      : 'not within ' + league.thresholdYds + ' yd inside ' + league.windowSec + 's';
     var MAX = 10, sel = currentDuel();
     var bars = order.map(function (id) {
       var x = rows[id], d = x.d, w = Math.max(4, (1 - Math.min(d.closestYds, MAX) / MAX) * 100);
@@ -378,22 +419,67 @@
       if (pl && qxy) { var ld = dist(lerpXY(pl.xy, S.frame), qxy); live = '<span class="live" style="left:calc(' + (1 - Math.min(ld, MAX) / MAX) * 100 + '% - 1px)"></span>'; }
       var dbl = x.b.length > 1 ? ' ×2' : '';
       return '<div class="barrow' + (sel.rusherId == id ? ' sel' : '') + '" data-id="' + id + '" title="vs ' + esc(x.b.map(shortName).join(' + ')) + '">' +
-        '<span class="nm">#' + P(id).jersey + ' ' + esc(lastName(id)) + dbl + '</span>' +
+        '<span class="nm">' + esc(lastName(id)) + dbl + '</span>' +
         '<span class="track"><span class="fill' + (d.rusherWon ? ' w' : '') + '" style="width:' + w + '%"></span>' +
         '<span class="thr" style="left:' + (1 - league.thresholdYds / MAX) * 100 + '%"></span>' + live + '</span>' +
-        '<span class="v">' + d.closestYds.toFixed(1) + ' yd</span></div>';
+        '<span class="v">' + d.closestYds.toFixed(1) + '</span></div>';
     }).join('');
     box.innerHTML = head +
-      '<div class="pr-top">Closest rusher: <span class="r">' + esc(tagName(top.rusherId)) + '</span></div>' +
-      '<div class="pr-sub">got within ' + top.closestYds.toFixed(1) + ' yds of the QB · ' + tp + '</div>' +
-      '<div class="bars">' + bars + '</div>' +
-      '<div class="legend">Bar = how close each rusher got (longer = closer). Yellow tick = ' + league.thresholdYds + '-yd win line, white tick = now.</div>';
+      '<div class="pr-top">Closest: <span class="r">' + esc(tagName(top.rusherId)) + '</span></div><div class="pr-sub">closest before the throw: <b>' + top.closestYds.toFixed(1) + ' yd</b> · ' + tp + '</div>' +
+      '<div class="bars" title="Bar = how close each rusher got to the QB (longer = closer)">' + bars + '</div>';
     box.querySelectorAll('.barrow').forEach(function (row) {
       row.onclick = function () { S.selected = +row.getAttribute('data-id'); renderPicker(); renderOverlay(); draw(); };
     });
   }
+  var TEAM_LINES = {
+    thirdDownBlitzRate: function (n, x, y) { return n + ' blitzes on ' + x + ' of 3rd downs, league average ' + y + '.'; },
+    blitzRate: function (n, x, y) { return n + ' blitzes on ' + x + ' of dropbacks, league average ' + y + '.'; },
+    manRate: function (n, x, y) { return n + ' plays man coverage on ' + x + ' of dropbacks, league average ' + y + '.'; },
+    pressureRate: function (n, x, y) { return n + ' pressures the QB on ' + x + ' of dropbacks, league average ' + y + '.'; },
+    sackRate: function (n, x, y) { return n + ' sacks the QB on ' + x + ' of dropbacks, league average ' + y + '.'; }
+  };
+  function renderTeam() {
+    var box = $('pill-team'), t = S.team, data = T.teams && T.teams[t], lg = league.team || {};
+    var name = TEAM_NAME[t] || t;
+    var head = '<div class="pill-head"><span><b class="team-dot" style="background:' + teamColor(t) + '"></b>' + esc(t) + ' · <span class="tag">team</span> · season wks 1–8</span>' +
+      '<span>' + (data && data.defense ? data.defense.plays + ' def. plays · ' : '') + 'vs league</span></div>';
+    if (!data || !data.defense) { box.innerHTML = head + '<div class="muted">No team data for ' + esc(t) + ' in this file.</div>'; return; }
+    var D = data.defense, O = data.offense || {};
+    // the ready-to-read line: the tendency furthest from league average, in percentage points.
+    // Blitzing less yet pressuring more (or the reverse) is one story, scored by both gaps together.
+    var pick = null, best = 0, line = '';
+    Object.keys(TEAM_LINES).forEach(function (k) {
+      if (D[k] == null || lg[k] == null) return;
+      var gap = Math.abs(D[k] - lg[k]);
+      if (gap > best) { best = gap; pick = k; }
+    });
+    if (pick) line = TEAM_LINES[pick](name, pct(D[pick]), pct(lg[pick]));
+    if (D.blitzRate != null && D.pressureRate != null && lg.blitzRate != null && lg.pressureRate != null) {
+      var bg = D.blitzRate - lg.blitzRate, pg = D.pressureRate - lg.pressureRate;
+      if (bg * pg < 0 && Math.abs(bg) + Math.abs(pg) > best) {
+        line = bg < 0
+          ? name + ' blitzes less than average (' + pct(D.blitzRate) + ' vs ' + pct(lg.blitzRate) + ') but still pressures on ' + pct(D.pressureRate) + ' of dropbacks.'
+          : name + ' blitzes more than average (' + pct(D.blitzRate) + ' vs ' + pct(lg.blitzRate) + ') but pressures on only ' + pct(D.pressureRate) + ' of dropbacks.';
+      }
+    }
+    function stat(label, k, src, l) {
+      var v = (src || D)[k], lv = (l || lg)[k];
+      if (v == null) return '';
+      var cls = lv != null ? (v > lv * 1.1 ? ' hi' : v < lv * 0.9 ? ' lo' : '') : '';
+      return '<div class="st"><span class="sl">' + label + '</span><b class="sv' + cls + '">' + pct(v) + '</b>' + (lv != null ? '<span class="lg">lg ' + pct(lv) + '</span>' : '') + '</div>';
+    }
+    var cov = (D.coverages || []).slice(0, 3).map(function (c) { return esc(c.name) + ' <b>' + pct(c.share) + '</b>'; }).join(' · ');
+    box.innerHTML = head +
+      (line ? '<div class="oneliner">' + esc(line) + '</div>' : '') +
+      '<div class="stats">' +
+      stat('Blitz', 'blitzRate') + stat('3rd-down blitz', 'thirdDownBlitzRate') + stat('Pressure', 'pressureRate') +
+      (D.manRate != null ? '<div class="st"><span class="sl">Man / zone</span><b class="sv">' + Math.round(D.manRate * 100) + '/' + Math.round((1 - D.manRate) * 100) + '</b>' + (lg.manRate != null ? '<span class="lg">lg ' + Math.round(lg.manRate * 100) + '/' + Math.round((1 - lg.manRate) * 100) + '</span>' : '') + '</div>' : '') +
+      stat('Sack', 'sackRate') + stat('Off. pressured', 'pressureAllowedRate', O) +
+      '</div>' +
+      (cov ? '<div class="cov"><span class="sl">Top coverages</span> ' + cov + '</div>' : '');
+  }
   $('pill-duel').addEventListener('click', function (e) {
-    if (e.target.getAttribute('data-act') === 'auto') { S.selected = null; renderPicker(); renderOverlay(); draw(); }
+    if (e.target.getAttribute('data-act') === 'auto') { S.selected = null; S.pair = null; renderPicker(); renderOverlay(); draw(); }
   });
 
   function renderOverlay() {
@@ -401,14 +487,17 @@
     document.querySelectorAll('.icon-btn[data-pill]').forEach(function (b) { b.classList.toggle('on', !!S.pills[b.getAttribute('data-pill')]); });
     $('pill-duel').classList.toggle('open', S.pills.duel);
     $('pill-pressure').classList.toggle('open', S.pills.pressure);
+    $('pill-team').classList.toggle('open', S.pills.team && !!S.team);
+    $('suggest').classList.toggle('on', !!S.pair && S.pills.duel);
     if (S.overlay && S.pills.duel) renderDuel();
     if (S.overlay && S.pills.pressure) renderPressure();
+    if (S.overlay && S.pills.team && S.team) renderTeam();
     renderChrome();
     if (!dragged) placeOverlayDefault();
   }
   function hideAll() {
-    S.overlay = false; S.pills.duel = false; S.pills.pressure = false;
-    renderOverlay(); draw();
+    S.overlay = false; S.pills.duel = false; S.pills.pressure = false; S.pills.team = false; S.team = null;
+    renderChips(); renderPicker(); renderOverlay(); draw();
   }
   function showOverlay() { S.overlay = true; renderOverlay(); draw(); }
 
@@ -437,7 +526,7 @@
 
   // ---------- canvas click: pick a player ----------
   cv.addEventListener('click', function (e) {
-    if (!S.overlay) return;
+    if (!S.overlay || S.bg === 'video') return;
     var play = plays[S.i], best = null, bd = 1e9;
     play.players.forEach(function (p) {
       var xy = lerpXY(p.xy, S.frame), d = Math.hypot(X(xy[0]) - e.clientX, Y(xy[1]) - e.clientY);
@@ -485,7 +574,7 @@
     var k = e.key, inForm = /^(SELECT|INPUT|TEXTAREA)$/.test(e.target.tagName);
     if (k === 'Tab') { e.preventDefault(); if (inForm) e.target.blur(); if (S.overlay) { S.overlay = false; renderOverlay(); draw(); } else showOverlay(); return; }
     if (k === 'Escape' || ((k === 'h' || k === 'H') && !inForm)) { e.preventDefault(); if (inForm) e.target.blur(); hideAll(); return; }
-    if (inForm) return;
+    if (inForm || S.bg === 'video') return;
     if (k === 'ArrowRight') { e.preventDefault(); gotoPlay(S.i + 1); }
     else if (k === 'ArrowLeft') { e.preventDefault(); gotoPlay(S.i - 1); }
     else if (k === ' ') { e.preventDefault(); togglePlay(); }
@@ -493,21 +582,68 @@
   // buttons should not keep focus (Space would re-click them)
   document.addEventListener('mouseup', function (e) { if (e.target.closest && e.target.closest('button')) e.target.closest('button').blur(); });
 
+  // ---------- background: replay or broadcast clip ----------
+  var noticeTimer = 0;
+  function notice(html) {
+    var n = $('notice'); n.innerHTML = html; n.hidden = false;
+    clearTimeout(noticeTimer); noticeTimer = setTimeout(function () { n.hidden = true; }, 10000);
+  }
+  $('notice').addEventListener('click', function () { $('notice').hidden = true; });
+  function renderLabel() {
+    $('replayLabel').innerHTML = S.bg === 'video'
+      ? '<b>' + BROADCAST.tag + '</b>' + esc(BROADCAST.label)
+      : '<b>REPLAY</b>' + esc(String(T.meta.label || 'Replay from tracking data — not live'));
+  }
+  function setBg(mode) {
+    var idx = -1;
+    if (mode === 'video') {
+      if (location.protocol === 'file:') { notice(BROADCAST.fileNotice); return; }
+      plays.forEach(function (p, k) { if (p.playId === BROADCAST.playId) idx = k; });
+      if (idx < 0) { notice('The broadcast clip\'s play is not in this data file.'); return; }
+    }
+    S.bg = mode;
+    var box = $('video');
+    if (mode === 'video') {
+      gotoPlay(idx);
+      S.frame = plays[idx].nFrames - 1; S.playing = false; S.holdUntil = 0;
+      if (!box.firstChild) {
+        var f = document.createElement('iframe');
+        f.src = BROADCAST.src; f.title = 'Broadcast clip';
+        f.allow = 'autoplay; encrypted-media; picture-in-picture';
+        f.referrerPolicy = 'strict-origin-when-cross-origin';
+        box.appendChild(f);
+      }
+      box.hidden = false;
+    } else {
+      box.innerHTML = ''; box.hidden = true;
+      S.frame = 0; S.playing = true; S.holdUntil = 0;
+    }
+    document.body.classList.toggle('broadcast', mode === 'video');
+    document.querySelectorAll('#bgSeg button').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-bg') === S.bg); });
+    renderLabel(); renderOverlay(); renderTick(); draw();
+  }
+  document.querySelectorAll('#bgSeg button').forEach(function (b) {
+    b.addEventListener('click', function () { if (b.getAttribute('data-bg') !== S.bg) setBg(b.getAttribute('data-bg')); });
+  });
+  document.querySelector('#bgSeg [data-bg=replay]').classList.add('on');
+
   // ---------- boot ----------
-  var label = String(T.meta.label || 'Replay from tracking data — not live');
-  $('replayLabel').innerHTML = '<b>REPLAY</b>' + esc(label);
+  renderLabel();
   document.title = 'Trench Duel · ' + T.meta.away + ' @ ' + T.meta.home;
   renderChips(); renderPicker(); renderOverlay(); renderTick();
   window.addEventListener('resize', resize);
   resize();
-  // #play=N&frame=F&pressure=1 opens paused on a given moment (used for screenshots)
+  // #play=N&frame=F&duel=1&pressure=1&team=CLE&bg=video opens paused on a given moment (used for screenshots)
   var hash = {};
   location.hash.replace(/^#/, '').split('&').forEach(function (kv) { var a = kv.split('='); if (a[0]) hash[a[0]] = a[1]; });
   if (hash.play) {
     gotoPlay(parseInt(hash.play, 10) - 1);
     if (hash.frame) { S.frame = Math.min(plays[S.i].nFrames - 1, parseFloat(hash.frame)); S.playing = false; }
-    if (hash.pressure === '1') S.pills.pressure = true;
-    renderChrome(); renderOverlay(); renderTick(); draw();
   }
+  if (hash.pressure === '1') S.pills.pressure = true;
+  if (hash.duel === '1') { S.pills.duel = true; if (S.selected == null && !S.pair && hl) S.pair = { r: hl[0], b: hl[1] }; }
+  if (hash.team && teams.indexOf(hash.team) >= 0) { S.team = hash.team; S.pills.team = true; }
+  renderChips(); renderPicker(); renderChrome(); renderOverlay(); renderTick(); draw();
+  if (hash.bg === 'video') setBg('video');
   requestAnimationFrame(loop);
 })();

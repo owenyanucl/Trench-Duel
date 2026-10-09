@@ -8,6 +8,7 @@
 </head>
 <body>
 <canvas id="field"></canvas>
+<div id="video" class="video" hidden></div>
 
 <!-- Game view chrome: part of the replay, not the overlay -->
 <div id="scorebug" class="chrome">
@@ -34,19 +35,24 @@
   <div id="bar">
     <div id="handle" class="handle" title="Drag to move">&#8942;&#8942;</div>
     <div class="brand">TRENCH<b>DUEL</b></div>
+    <div id="bgSeg" class="seg" title="Background"><button data-bg="replay">Replay</button><button data-bg="video">Broadcast</button></div>
     <div id="chips" class="chips"></div>
     <select id="picker" title="Pick a player"></select>
+    <button id="suggest" class="suggest" title="Open the most-met matchup in this game"></button>
     <button class="icon-btn" data-pill="duel" title="Trench Duel">&#9876;<span>Duel</span></button>
     <button class="icon-btn" data-pill="pressure" title="Pressure">&#9678;<span>Pressure</span></button>
+    <button class="icon-btn" data-pill="team" title="Team tendencies">&#9873;<span>Team</span></button>
     <button id="barClose" class="icon-btn close" title="Hide all (H / Esc)">&#10005;</button>
   </div>
   <div id="pills">
     <section id="pill-duel" class="pill"></section>
     <section id="pill-pressure" class="pill"></section>
+    <section id="pill-team" class="pill"></section>
   </div>
 </div>
 
 <div id="hint" class="hint">Tab overlay · H/Esc hide all · ← → plays · Space pause</div>
+<div id="notice" class="notice" hidden></div>
 <div id="fatal" class="fatal" hidden>Missing data: <code>overlay/data/demo_game.js</code> did not load.</div>
 
 <script src="data/demo_game.js"></script>

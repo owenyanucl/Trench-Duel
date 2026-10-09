@@ -11,6 +11,7 @@ Outputs:
   output/reps.csv              every rep in weeks 1-8
   output/season.csv            per-player rep totals
   output/validation.txt        how the tracking definition agrees with PFF pressures
+  output/teams.csv             per-team blitz, coverage and pressure rates on defense, pressure allowed on offense
   output/*.png                 charts
   overlay/data/demo_game.js    one game's replay and duels for the co-streamer overlay
 
@@ -164,7 +165,40 @@ def charts(reps, season):
     return pairs
 
 
-def demo_game(game_id, plays, players, games, pff, reps, season):
+def team_rates(df):
+    """Defensive and pass-protection rates over any set of plays."""
+    typed = df[df["pff_passCoverageType"].isin(["Man", "Zone"])]
+    return {"blitzRate": df["blitz"].mean(), "thirdDownBlitzRate": df.loc[df["down"] == 3, "blitz"].mean(),
+            "manRate": (typed["pff_passCoverageType"] == "Man").mean(), "pressureRate": df["pressure"].mean(),
+            "sackRate": (df["passResult"] == "S").mean()}
+
+
+def team_table(plays, pff):
+    """Per-team blitz, coverage and pressure rates on defense and pressure allowed on offense, plus the league."""
+    rushers = pff[pff["pff_role"] == "Pass Rush"].groupby(["gameId", "playId"]).size().rename("rushers")
+    pressured = (pff[["pff_hit", "pff_hurry", "pff_sack"]].fillna(0) == 1).any(axis=1)
+    pressured = pressured.groupby([pff["gameId"], pff["playId"]]).any().rename("pressure")
+    p = plays.join(rushers, on=["gameId", "playId"]).join(pressured, on=["gameId", "playId"])
+    p["rushers"] = p["rushers"].fillna(0)
+    p["pressure"] = p["pressure"].eq(True)
+    p["blitz"] = p["rushers"] >= 5
+
+    rows = []
+    for team in sorted(p["defensiveTeam"].unique()):
+        d = p[p["defensiveTeam"] == team]
+        o = p[p["possessionTeam"] == team]
+        cov = d["pff_passCoverage"].dropna().value_counts().head(3) / len(d)
+        rows.append({"team": team, "defPlays": len(d), **team_rates(d),
+                     "coverages": [{"name": k, "share": round(float(v), 4)} for k, v in cov.items()],
+                     "offPlays": len(o), "pressureAllowedRate": o["pressure"].mean(),
+                     "sackAllowedRate": (o["passResult"] == "S").mean()})
+    teams = pd.DataFrame(rows)
+    league = {k: round(float(v), 4) for k, v in team_rates(p).items()}
+    league["pressureAllowedRate"] = league["pressureRate"]
+    return teams, league
+
+
+def demo_game(game_id, plays, players, games, pff, reps, season, teams, team_league):
     track = pd.read_csv(os.path.join(DATA, "tracking", f"tracking_{game_id}.csv"))
     flip = track["playDirection"] == "left"
     track.loc[flip, "x"] = 120 - track.loc[flip, "x"]
@@ -226,9 +260,20 @@ def demo_game(game_id, plays, players, games, pff, reps, season):
         "players": player_map,
         "season": season_map,
         "league": {"repWinRate": round(float(reps["rusherWon"].mean()), 4), "thresholdYds": THRESHOLD_YDS, "windowSec": WINDOW_SEC,
-                   "byAlign": {k: round(float(v), 4) for k, v in reps.groupby("align")["rusherWon"].mean().items()}},
+                   "byAlign": {k: round(float(v), 4) for k, v in reps.groupby("align")["rusherWon"].mean().items()},
+                   "team": team_league},
+        "teams": {},
         "plays": out_plays,
     }
+    for t in teams[teams["team"].isin([g["homeTeamAbbr"], g["visitorTeamAbbr"]])].itertuples():
+        payload["teams"][t.team] = {
+            "defense": {"plays": int(t.defPlays), "blitzRate": round(float(t.blitzRate), 4),
+                        "thirdDownBlitzRate": round(float(t.thirdDownBlitzRate), 4), "manRate": round(float(t.manRate), 4),
+                        "pressureRate": round(float(t.pressureRate), 4), "sackRate": round(float(t.sackRate), 4),
+                        "coverages": t.coverages},
+            "offense": {"plays": int(t.offPlays), "pressureAllowedRate": round(float(t.pressureAllowedRate), 4),
+                        "sackAllowedRate": round(float(t.sackAllowedRate), 4)},
+        }
     os.makedirs(OVERLAY, exist_ok=True)
     with open(os.path.join(OVERLAY, "demo_game.js"), "w") as f:
         f.write("window.TRENCH = ")
@@ -264,7 +309,18 @@ def main():
                  .merge(players[["nflId", "displayName"]].rename(columns={"nflId": "blockerId", "displayName": "blocker"}), on="blockerId")
     print(pairs[pairs["reps"] >= 15].sort_values("wins", ascending=False).head(10).to_string(index=False))
 
-    n = demo_game(args.game, plays, players, games, pff, reps, season)
+    teams, team_league = team_table(plays, pff)
+    csv = teams.assign(coverages=teams["coverages"].map(lambda c: ", ".join(f"{x['name']} {x['share']:.0%}" for x in c)))
+    csv.round(4).to_csv(os.path.join(OUT, "teams.csv"), index=False)
+    cols = ["team", "defPlays", "blitzRate", "thirdDownBlitzRate", "manRate", "pressureRate", "sackRate", "pressureAllowedRate"]
+    print("\nLeague team rates:", team_league)
+    print("Top blitzing defenses:")
+    print(teams.nlargest(5, "blitzRate")[cols].round(3).to_string(index=False))
+    g = games.set_index("gameId").loc[args.game]
+    print("Demo game teams:")
+    print(csv[csv["team"].isin([g["visitorTeamAbbr"], g["homeTeamAbbr"]])][cols + ["coverages"]].round(3).to_string(index=False))
+
+    n = demo_game(args.game, plays, players, games, pff, reps, season, teams, team_league)
     print(f"\nWrote overlay/data/demo_game.js with {n} plays from game {args.game}")
 
 

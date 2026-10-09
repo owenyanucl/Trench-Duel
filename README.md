@@ -12,9 +12,12 @@
 python3 -m venv .venv && .venv/bin/pip install pandas numpy matplotlib
 .venv/bin/python trench_duels.py            # about 30 s; writes output/ and overlay/data/demo_game.js
 open overlay/index.html                     # the co-streamer overlay over a replay of CLE @ MIN
+python3 -m http.server 8000 -d overlay      # Broadcast mode (YouTube clip) needs http: open http://localhost:8000
 ```
 
-In the overlay, `Tab` shows or hides the bar, `H` or `Esc` hides everything, and `←` `→` `space` step through plays. Drag the bar by its handle. Opening `overlay/index.html#play=67&frame=33&pressure=1` pauses on the moment in the screenshot.
+In the overlay, `Tab` shows or hides the bar, `H` or `Esc` hides everything, and `←` `→` `space` step through plays. Drag the bar by its handle.
+<!-- PENDING:collapsed -->
+Opening `overlay/index.html#play=67&frame=33&duel=1&pressure=1` pauses on the moment in the screenshot with the Duel and Pressure pills open.
 
 ## What is in the box
 
@@ -32,4 +35,11 @@ In the overlay, `Tab` shows or hides the bar, `H` or `Esc` hides everything, and
 - **Alignment matters.** Interior linemen start closer to the quarterback, and a collapsing pocket can bring them within 2.5 yards without beating anyone. At 2.5 yards only 22% of interior "wins" were real pressures, so the threshold is 2 yards and every player is judged against the average for his alignment (edge 7.1%, interior 3.8%).
 - **Double teams:** when two blockers share a rusher, a win counts against both.
 - **Data:** the Big Data Bowl 2023 set covers 2021 weeks 1–8, passing plays only, and tracking stops at the throw or sack. The overlay replays a recorded game and is labelled as a replay; a live version needs the NFL's licensed real-time feed.
-- **Prior work:** ESPN's Pass Rush Win Rate asks the same question with Next Gen Stats (did the rusher beat his block within 2.5 s), STRAIN (Big Data Bowl 2023) measures how fast rushers close on the quarterback, and a 2026 Penn preprint ranks blocker–rusher contests head to head. Trench Duel's contribution is the delivery: an alignment-adjusted, spoiler-safe in-game tally a commentator can read out, built from public data.
+- **Prior work:** ESPN's Pass Rush Win Rate asks the same question with Next Gen Stats (did the rusher beat his block within 2.5 s), STRAIN (Big Data Bowl 2023) measures how fast rushers close on the quarterback, and a 2026 Penn preprint ranks blocker–rusher contests head to head. Creator overlays exist too: since 15 September 2026, FAN.live and Creator Sports Network give creators live NFL renders with overlays and player info built from official data. Neither the overlay idea nor the stat is new. Trench Duel's contribution is the delivery: a spoiler-safe, alignment-adjusted head-to-head tally a commentator can read out, built from public data.
+
+## What's next
+
+- **A streamer-private control panel that pushes chosen cards to the stream.** The streamer browses in private and sends only what they pick. It also keeps stats from running ahead of the video: at Super Bowl LIX, streams ran 26 to 51 seconds behind the live action.
+- **Protected areas:** the streamer marks the parts of the screen a card may never cover, such as the ball, the players in the play and the score.
+- **A live feed from Genius Sports**, the NFL's exclusive distributor of real-time stats and Next Gen Stats, synced to the stream's delay.
+- **OBS integration**, so the overlay drops into the software streamers already use.
