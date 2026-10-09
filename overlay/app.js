@@ -19,7 +19,7 @@
     LA: 'The Rams', LAC: 'The Chargers', LV: 'Las Vegas', MIA: 'Miami', MIN: 'Minnesota', NE: 'New England', NO: 'New Orleans', NYG: 'The Giants',
     NYJ: 'The Jets', PHI: 'Philadelphia', PIT: 'Pittsburgh', SEA: 'Seattle', SF: 'San Francisco', TB: 'Tampa Bay', TEN: 'Tennessee', WAS: 'Washington'
   };
-  var PILL_MAX = 140; // px: every pill is designed to fit this height; the field starts below it
+  var PILL_MAX = 140; // px: every pill is designed to fit this height
   // Broadcast mode: real footage of one play in this game, shown behind the overlay.
   var BROADCAST = {
     playId: 2349,
@@ -194,31 +194,39 @@
   }
 
   // ---------- canvas / field ----------
-  var cv = $('field'), ctx = cv.getContext('2d'), dpr = 1, view = { s: 10, ox: 0, oy: 0 }, barH = 34;
+  var cv = $('field'), ctx = cv.getContext('2d'), dpr = 1, view = { s: 10, ox: 0, oy: 0 };
   document.documentElement.style.setProperty('--pill-max', PILL_MAX + 'px');
   function resize() {
     dpr = window.devicePixelRatio || 1;
     cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
-    if (S.overlay && $('bar').offsetHeight) barH = $('bar').offsetHeight;
-    // reserve a band for the bar and one row of pills so an open pill never covers the field
-    var padX = 16, top = VIEWER ? 16 : innerWidth <= 760 ? 96 : 10 + barH + 6 + PILL_MAX + 8, bottom = innerWidth <= 760 ? 124 : 52;
-    var s = Math.min((innerWidth - 2 * padX) / 120, (innerHeight - top - bottom) / 53.3);
-    view.s = s;
-    view.ox = (innerWidth - 120 * s) / 2;
-    view.oy = top + ((innerHeight - top - bottom) - 53.3 * s) / 2;
+    camera();
     layoutVideo();
     if (!dragged) placeOverlayDefault();
     draw();
   }
-  // Broadcast footage starts where the field starts, so open pills never cover it.
+  // Broadcast footage fills the window like the field does.
   // The iframe covers that band at 16:9 and is cropped, which also pushes YouTube's title bar and controls out of view.
   function layoutVideo() {
-    var box = $('video'), f = box.firstChild, top = Math.round(view.oy), w = innerWidth, h = innerHeight - top;
+    var box = $('video'), f = box.firstChild, top = 0, w = innerWidth, h = innerHeight;
     box.style.top = top + 'px';
     if (!f) return;
     var fw = Math.max(w, h * 16 / 9) * 1.08, fh = fw * 9 / 16;
     f.style.width = fw + 'px'; f.style.height = fh + 'px';
     f.style.left = (w - fw) / 2 + 'px'; f.style.top = (h - fh) / 2 + 'px';
+  }
+  // Broadcast-style camera, fixed for each play: the field's 53.3-yd width fills the window height, and the window
+  // width shows the stretch around the line of scrimmage, centred a few yards downfield, clamped to the field.
+  var CAMERA_LEAD_YDS = 6;
+  var ZOOM = 1.4; // on top of fitting the field's 53.3-yd width to the window height
+  function camera() {
+    var p = plays[S.i], s = innerHeight / 53.3 * ZOOM, visW = innerWidth / s, visH = innerHeight / s;
+    var cx = p.ball[0][0] + CAMERA_LEAD_YDS, cy = p.ball[0][1], xmin, ytop;
+    if (visW >= 120) xmin = (120 - visW) / 2;
+    else xmin = Math.max(0, Math.min(120 - visW, cx - visW / 2));
+    // vertically centred on the ball at the snap, never past either sideline
+    if (visH >= 53.3) ytop = 53.3 + (visH - 53.3) / 2;
+    else ytop = Math.max(visH, Math.min(53.3, cy + visH / 2));
+    view.s = s; view.ox = -xmin * s; view.oy = -(53.3 - ytop) * s;
   }
   // field y=53.3 is drawn at the top of the screen
   function X(x) { return view.ox + x * view.s; }
@@ -284,6 +292,7 @@
 
   function drawPlayers(play, f) {
     var s = view.s, r = Math.max(5, s * 0.95), font = getComputedStyle(document.body).fontFamily;
+    var k = Math.max(1, s / 10); // annotation scale: grows with the camera
     var pos = {};
     play.players.forEach(function (p) { pos[p.nflId] = lerpXY(p.xy, f); });
     var duel = S.overlay && S.pills.duel ? currentDuel() : null;
@@ -296,7 +305,7 @@
     var qbDist = null, qbCol = null;
     if (replayMarks && ringR != null && pos[ringR] && pos[play.qbId]) {
       var a = pos[ringR], q = pos[play.qbId], d = dist(a, q), c = pressureColor(d);
-      ctx.strokeStyle = c; ctx.lineWidth = 2.5; ctx.setLineDash([6, 5]);
+      ctx.strokeStyle = c; ctx.lineWidth = 2.5 * k; ctx.setLineDash([6 * k, 5 * k]);
       ctx.beginPath(); ctx.moveTo(X(a[0]), Y(a[1])); ctx.lineTo(X(q[0]), Y(q[1])); ctx.stroke(); ctx.setLineDash([]);
       qbDist = d; qbCol = c;
     }
@@ -317,7 +326,7 @@
     var hi = [ringB, ringR, ringOnly].filter(function (id) { return id != null && pos[id]; });
     hi.forEach(function (id) {
       ctx.strokeStyle = id == ringR ? cssVar('--win', '#ff8a3d') : id == ringB ? cssVar('--hold', '#4fc3ff') : cssVar('--accent', '#eef2fa');
-      ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(X(pos[id][0]), Y(pos[id][1]), r + 4, 0, Math.PI * 2); ctx.stroke();
+      ctx.lineWidth = 3 * k; ctx.beginPath(); ctx.arc(X(pos[id][0]), Y(pos[id][1]), r + 4 * k, 0, Math.PI * 2); ctx.stroke();
     });
     // the rusher's tag goes on the side away from the blocker, the blocker's on the other side
     var rusherAbove = !(ringR != null && ringB != null && pos[ringR] && pos[ringB]) || Y(pos[ringR][1]) <= Y(pos[ringB][1]);
@@ -326,10 +335,10 @@
       var cx = X(pos[id][0]), cy = Y(pos[id][1]), isR = id == ringR;
       var above = isR ? rusherAbove : id == ringB ? !rusherAbove : false;
       var label = lastName(id) + (isR && qbDist != null ? ' · ' + qbDist.toFixed(1) + ' yd to QB at the end' : '');
-      ctx.font = '700 11px ' + font; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      var w = ctx.measureText(label).width + 12, ly = above ? cy - r - 26 : cy + r + 10;
-      ctx.fillStyle = 'rgba(0,0,0,0.78)'; roundRect(cx - w / 2, ly, w, 16, 8); ctx.fill();
-      ctx.fillStyle = isR && qbCol ? qbCol : '#fff'; ctx.fillText(label, cx, ly + 8.5);
+      ctx.font = '700 ' + Math.round(11 * k) + 'px ' + font; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      var w = ctx.measureText(label).width + 12 * k, h = 16 * k, ly = above ? cy - r - 10 * k - h : cy + r + 10 * k;
+      ctx.fillStyle = 'rgba(0,0,0,0.78)'; roundRect(cx - w / 2, ly, w, h, h / 2); ctx.fill();
+      ctx.fillStyle = isR && qbCol ? qbCol : '#fff'; ctx.fillText(label, cx, ly + h / 2 + 0.5);
     });
   }
   function roundRect(x, y, w, h, r) {
@@ -339,6 +348,7 @@
 
   function draw() {
     var play = plays[S.i];
+    camera();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawField(play);
     drawPlayers(play, S.frame);

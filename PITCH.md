@@ -15,7 +15,7 @@ Quoted lines are spoken. Bullets are what the presenter does on screen.
 
 - In the repository, run `python3 -m http.server 8000 -d overlay` and leave it running. Broadcast mode needs http, so every demo URL below starts with `http://localhost:8000/`.
 - Open each demo URL in a fresh tab, or reload after pasting it, so the page lands on exactly that moment.
-- Keep the browser window at 1280×720 or larger. At that size no pill sits over the field or the video.
+- Use a full-screen browser window, 1280×720 or larger. The field fills the screen, zoomed in around the line of scrimmage; the bar and pills float over its top edge and can be dragged or hidden with `H`.
 - Put two browser windows side by side. Left: the streamer's controller, `http://localhost:8000/`, which has everything. Right: the viewer page, `http://localhost:8000/viewer.html`, which is what viewers see and what OBS would capture: the game plus only what the controller pushes.
 - Backup if the live push misbehaves: `http://localhost:8000/viewer.html#demo=push&play=67&phase=after` renders the pushed Duel card on its own.
 

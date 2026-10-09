@@ -1,5 +1,5 @@
 :root {
-  --glass: rgba(12, 14, 20, 0.68);
+  --glass: rgba(14, 16, 19, 0.72);
   --solid: rgb(16, 18, 25);
   --blur: blur(12px) saturate(1.2);
   --line: rgba(255, 255, 255, 0.14);
@@ -17,7 +17,7 @@
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 * { box-sizing: border-box; font-variant-numeric: tabular-nums; }
-html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1a10; color: var(--text); font: 12px/1.35 var(--font); font-variant-numeric: tabular-nums; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0e1013; color: var(--text); font: 12px/1.35 var(--font); font-variant-numeric: tabular-nums; }
 canvas#field { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
 button, select { font: inherit; color: inherit; }
 
@@ -40,7 +40,7 @@ button, select { font: inherit; color: inherit; }
 #controls .btn-hide { margin-left: 4px; border-color: rgba(255, 255, 255, 0.3); }
 
 .replay-label { position: fixed; right: 12px; bottom: 12px; z-index: 1000; background: rgba(0, 0, 0, 0.7); border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 6px; padding: 4px 8px; font-size: 11px; font-weight: 600; pointer-events: none; max-width: min(46vw, max(280px, calc(50vw - 160px))); }
-.replay-label b { color: var(--win); letter-spacing: 0.08em; margin-right: 4px; }
+.replay-label b { color: var(--text); letter-spacing: 0.08em; margin-right: 4px; }
 
 .hint { position: fixed; right: 12px; top: 10px; color: rgba(255, 255, 255, 0.55); font-size: 10px; pointer-events: none; }
 .fatal { position: fixed; inset: 40% 20% auto; background: var(--solid); border: 1px solid var(--win); padding: 16px; border-radius: 8px; font-size: 14px; text-align: center; }
@@ -135,8 +135,8 @@ button, select { font: inherit; color: inherit; }
 .st { display: flex; align-items: baseline; gap: 4px; line-height: 1.25; min-width: 0; white-space: nowrap; }
 .st .sl { font-size: 10px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
 .st .sv { font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; margin-left: auto; }
-.st .sv.hi { color: var(--win); }
-.st .sv.lo { color: var(--hold); }
+.st .sv.hi { color: var(--text); }
+.st .sv.lo { color: var(--text); }
 .st .lg { font-size: 9px; color: var(--dim); white-space: nowrap; }
 .cov { font-size: 10px; color: var(--dim); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cov b { color: var(--text); }
@@ -186,7 +186,9 @@ body.broadcast #btnPrev, body.broadcast #btnPlay, body.broadcast #btnNext, body.
 body.solid #bar, body.solid .pill, body.solid .chrome, body.solid .replay-label, body.solid .notice { background: var(--solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
 
 /* ---------- team colours as small chips: app.js sets --team / --team-ink inline ---------- */
-.chip, .sb-team { background: var(--team, #888); color: var(--team-ink, #fff); }
+/* team colour only as a small dot beside the abbreviation */
+.chip, .sb-team { display: inline-flex; align-items: center; gap: 5px; background: rgba(255, 255, 255, 0.08); color: var(--text); }
+.chip::before, .sb-team::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--team, #888); flex: none; }
 .team-dot { background: var(--team, #888); }
 
 /* ---------- bar slots: situation, offense look, defense ---------- */
@@ -197,7 +199,7 @@ body.solid #bar, body.solid .pill, body.solid .chrome, body.solid .replay-label,
 .tally .who .r { color: var(--win); }
 .tally .who .b { color: var(--hold); }
 .tally .who .pending { color: var(--dim); }
-#playResult.bad { color: var(--win); }
+#playResult.bad { color: var(--text); }
 /* chrome.js hides the keyboard hint while the bar would cover it */
 body.hint-off .hint { visibility: hidden; }
 .st .ct { font-size: 9.5px; color: var(--dim); }
@@ -248,7 +250,7 @@ body.viewer .notice { top: var(--safe-y); bottom: auto; }
 
 /* lower-left, above the scorebug, inside the safe margin; narrow enough to stay off the middle of the field */
 .vcard { position: fixed; z-index: 60; left: var(--safe-x); bottom: calc(var(--safe-y) + 44px); width: min(420px, 34vw); min-width: 300px;
-  padding: 12px 16px 10px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.16); border-left: 4px solid var(--win);
+  padding: 12px 16px 10px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.16); border-left: 3px solid rgba(255, 255, 255, 0.55);
   background: rgba(10, 12, 18, 0.74); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
   color: var(--text); opacity: 1; transform: none; transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out); }
 /* enters with a short fade and rise; leaves instantly when pulled (hidden or emptied: no exit animation) */
@@ -277,3 +279,75 @@ body.solid .vcard { background: var(--solid); -webkit-backdrop-filter: none; bac
   @starting-style { .vcard { transform: none; } }
   #bar button:active, #controls button:active, .pill-head button:active { transform: none; }
 }
+
+/* ---------- bigger, calmer type: one text weight (600), heavy only for numbers ---------- */
+#bar { gap: 8px; padding: 5px 10px 5px 6px; }
+#bar .slot, #bar .icon-btn span, #picker, .suggest, #bar .push-btn { font-size: 14px; font-weight: 600; }
+.chip { font-size: 13px; font-weight: 700; padding: 3px 10px 3px 8px; opacity: 1; }
+.chip.dim { opacity: 0.45; }
+.chip.active { outline: 1.5px solid var(--text); outline-offset: 1px; }
+.seg button { font-size: 13px; padding: 3px 10px; }
+.slot { padding: 3px 10px; max-width: 240px; }
+.icon-btn { font-size: 15px; padding: 3px 10px; }
+.suggest { padding: 3px 12px; }
+.suggest span { font-size: 10px; }
+#picker { max-width: 190px; padding: 4px 8px; }
+#solidBtn { font-size: 13px; }
+.brand { font-size: 12px; }
+#scorebug, .replay-label, #controls { font-size: 14px; }
+#controls button { font-size: 13px; padding: 4px 10px; }
+.sb-team { padding: 2px 8px 2px 6px; }
+
+/* pills float over the field: wider, solid-enough glass, no height clip */
+.pill { max-height: none; padding: 10px 14px 12px; border-radius: 14px; }
+#pill-duel { width: 640px; }
+#pill-pressure { width: 360px; }
+#pill-team { width: 440px; }
+.duel-grid { grid-template-columns: 300px 1fr; gap: 14px; }
+.duel-grid .dots { max-width: 290px; }
+.pill-head { font-size: 11px; margin-bottom: 6px; }
+.pill-head button, .pill-head .push-btn { font-size: 11px; padding: 3px 10px; }
+.matchup { font-size: 16px; }
+.matchup .vs { font-size: 13px; }
+.tally .score { font-size: 15px; }
+.tally .score em { font-size: 32px; }
+.tally .who { font-size: 13px; }
+.dot { width: 8px; height: 8px; }
+.oneliner, .duel-grid .oneliner { font-size: 16.5px; line-height: 1.35; padding: 6px 10px; }
+.ctx { font-size: 13px; margin-top: 8px; }
+.ctx .ctx-k { font-size: 10px; }
+.pr-top { font-size: 15px; }
+.pr-sub { font-size: 13px; }
+.barrow { font-size: 13px; grid-template-columns: 80px 1fr 30px; }
+.track { height: 9px; }
+.st .sl { font-size: 13px; }
+.st .sv { font-size: 14px; }
+.st .ct, .st .lg { font-size: 11.5px; }
+.cov { font-size: 12.5px; margin-top: 6px; }
+.stats { gap: 4px 18px; }
+
+/* the primary action reads first */
+.pill-head .push-btn { font-size: 12px; padding: 4px 12px; }
+
+/* viewer lower-third: the line is the thing people read */
+.vc-line { font-size: 20px; }
+.vcard { width: min(460px, 36vw); }
+
+/* the bar keeps only what the streamer needs to act: the offense/defense slots go below 1700px, Solid below 1400px */
+@media (max-width: 1700px) {
+  .slot-off, .slot-def { display: none; }
+  #picker { max-width: 150px; }
+}
+@media (max-width: 1400px) {
+  #bar { gap: 6px; }
+  #solidBtn { display: none; }
+  #picker { max-width: 120px; }
+  .seg button { padding: 3px 8px; }
+  .icon-btn { padding: 3px 8px; }
+}
+
+/* craft floor: no thick left rules on callouts, no tracked-caps kicker over the pill content */
+.oneliner, .duel-grid .oneliner { border-left: 0; background: rgba(255, 255, 255, 0.08); border-radius: 8px; }
+.vcard { border-left: 1px solid rgba(255, 255, 255, 0.16); }
+.pill-head { font-size: 12px; letter-spacing: 0; text-transform: none; }
+.pill-head .push-btn { text-transform: none; letter-spacing: 0; }
