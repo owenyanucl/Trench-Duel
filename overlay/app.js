@@ -102,8 +102,21 @@
   // ---------- state ----------
   var S = {
     i: 0, frame: 0, playing: !VIEWER, last: 0, endAt: 0, afterAt: 0, after: false, openedAt: {}, pushed: null, clearedAt: 0,
-    overlay: true, pills: { duel: false, pressure: false, team: false },
+    overlay: true, pills: { duel: false, pressure: false, team: false, heat: false },
     selected: null, pair: null, team: null, bg: 'replay'
+  };
+  // Hook for panels kept in their own files (heat.js): the replay state, the spoiler-safe ready rule,
+  // and callbacks run after every overlay render.
+  window.TD = {
+    get state() { return S; },
+    plays: plays,
+    selected: function () { return S.selected; },
+    // earlier plays always; the play on screen once its tracking up to the throw or sack has arrived
+    isReady: function (k) {
+      if (k !== S.i) return k < S.i;
+      return S.after || effFrame() >= plays[k].endFrame + DATA_LATENCY_FRAMES;
+    },
+    onRender: []
   };
 
   // ---------- duel logic (spoiler-safe: plays[0..S.i] only) ----------
@@ -717,10 +730,11 @@
     renderChrome();
     if (!dragged) placeOverlayDefault();
     postState();
+    window.TD.onRender.forEach(function (fn) { fn(); });
   }
   function hideAll() {
     // the panic button also pulls whatever is on the stream
-    S.overlay = false; S.pills.duel = false; S.pills.pressure = false; S.pills.team = false; S.team = null; S.pushed = null;
+    S.overlay = false; S.pills.duel = false; S.pills.pressure = false; S.pills.team = false; S.pills.heat = false; S.team = null; S.pushed = null;
     renderChips(); renderPicker(); renderOverlay(); draw();
   }
   function showOverlay() { S.overlay = true; renderOverlay(); draw(); }
@@ -793,7 +807,7 @@
     // at the snap, pills the streamer opened more than PILL_STALE_MS ago fold away while the replay plays
     if (prev === 'pre' && ph === 'live' && S.playing) {
       var now = performance.now();
-      ['duel', 'pressure', 'team'].forEach(function (k) {
+      ['duel', 'pressure', 'team', 'heat'].forEach(function (k) {
         if (S.pills[k] && now - (S.openedAt[k] || 0) > PILL_STALE_MS) { S.pills[k] = false; if (k === 'team') S.team = null; }
       });
       renderChips(); renderPicker();
@@ -919,7 +933,8 @@
     }
     S.pills.pressure = hash.pressure === '1';
     S.pills.duel = hash.duel === '1';
-    S.openedAt = { duel: performance.now(), pressure: performance.now(), team: performance.now() };
+    S.pills.heat = hash.heat === '1';
+    S.openedAt = { duel: performance.now(), pressure: performance.now(), team: performance.now(), heat: performance.now() };
     if (S.pills.duel && S.selected == null && !S.pair && hl) S.pair = { r: hl[0], b: hl[1] };
     if (hash.team && teams.indexOf(hash.team) >= 0) { S.team = hash.team; S.pills.team = true; }
     else { S.team = null; S.pills.team = false; }
