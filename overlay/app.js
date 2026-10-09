@@ -2,8 +2,11 @@
   'use strict';
   var T = window.TRENCH;
   if (!T) { document.getElementById('fatal').hidden = false; return; }
+  // The streamer's controller (index.html) drives; the viewer page (viewer.html, what OBS captures) only follows
+  // and shows the game view plus the Duel card the controller pushed.
+  var VIEWER = window.TRENCH_MODE === 'viewer';
 
-  var FPS = 10, HOLD_MS = 1500;
+  var FPS = 10, LATENCY_MS = 2000, AFTER_HOLD_MS = 4000, PILL_STALE_MS = 10000;
   var TEAM = {
     ARI: '#97233F', ATL: '#A71930', BAL: '#5B3FB8', BUF: '#00338D', CAR: '#0085CA', CHI: '#C83803', CIN: '#FB4F14', CLE: '#FF3C00',
     DAL: '#2E5FB3', DEN: '#FB4F14', DET: '#0076B6', GB: '#FFB612', HOU: '#A71930', IND: '#1F5BA8', JAX: '#006778', KC: '#E31837',
@@ -22,7 +25,7 @@
     playId: 2349,
     src: 'https://www.youtube-nocookie.com/embed/e7VpmQzDL4k?autoplay=1&mute=1&controls=0&playsinline=1&loop=1&playlist=e7VpmQzDL4k&cc_load_policy=0&rel=0&modestbranding=1&end=22',
     tag: 'BROADCAST CLIP',
-    label: 'Cleveland Browns YouTube · CLE @ MIN 2021 Wk 4, play shown: Q3 11:29 McKinley sack',
+    label: 'Cleveland Browns YouTube · CLE @ MIN 2021 Wk 4, play shown: Q3 11:29, 3rd & 3',
     fileNotice: 'Broadcast mode needs a local server: <code>python3 -m http.server 8000 -d overlay</code>, then open <code>http://localhost:8000</code>'
   };
   var RESULT = { C: 'Complete', I: 'Incomplete', S: 'Sack', IN: 'Interception', R: 'Scramble' };
@@ -53,15 +56,34 @@
   function pairKey(r, b) { return r + '|' + b; }
   // Which alignment group a player's expected rate matches best: the label for the comparison.
   function alignOf(id) {
-    var s = T.season[id], by = league.byAlign || {}, e = s && s.expected, best = 'other', bd = 1e9;
+    var s = SEASON[id], by = LG.byAlign || league.byAlign || {}, e = s && s.expected, best = 'other', bd = 1e9;
     if (e == null) return best;
     Object.keys(by).forEach(function (k) { var d = Math.abs(by[k] - e); if (d < bd) { bd = d; best = k; } });
     return best;
   }
   var ALIGN_PLURAL = { edge: 'edge rushers', interior: 'interior rushers', other: 'rushers from his spots' };
   var ALIGN_ONE = { edge: 'an edge rusher', interior: 'an interior rusher', other: 'a rusher from his spots' };
-  function expectedOf(id) { var s = T.season[id]; return s && s.expected != null ? s.expected : league.repWinRate; }
-  function times(rate, exp) { return exp > 0 ? (rate / exp).toFixed(1) + 'x' : '—'; }
+  // Season context never uses future games: only weeks before tonight.
+  var SEASON = T.seasonToDate || {};
+  var LG = T.league.toDate || {};
+  var TEAMS = T.teamsToDate || {};
+  var LG_TEAM = T.league.teamToDate || {};
+  var toDateLabel = (function () {
+    var w = T.meta.toDateWeeks;
+    if (Array.isArray(w)) return w.length ? 'wks ' + (w.length > 1 ? w[0] + '–' + w[w.length - 1] : w[0]) : '';
+    if (typeof w === 'number') return w > 0 ? 'wks 1–' + w : '';
+    return w ? 'wks ' + w : '';
+  })();
+  var BEFORE = 'before tonight' + (toDateLabel ? ' (' + toDateLabel + ')' : '');
+  function expectedOf(id) { var s = SEASON[id]; return s && s.expected != null ? s.expected : LG.repWinRate; }
+  function cnt(n, of) { return '(' + n + ' of ' + of + ')'; }
+  // a to-date figure is either {n, of} or a rate
+  function rateOf(x) { return typeof x === 'number' ? x : x && x.of ? x.n / x.of : null; }
+  function countOf(x) { return x && typeof x === 'object' && x.of != null ? cnt(x.n, x.of) : ''; }
+  function num(n) { return Number(n).toLocaleString('en-US'); }
+  function lgCount(x, sep) { return x && typeof x === 'object' && x.of ? ' (' + num(x.n) + (sep || '/') + num(x.of) + ')' : ''; }
+  function arrow(v, lv) { return v == null || lv == null || Math.round(v * 100) === Math.round(lv * 100) ? '' : v > lv ? '<i class="mk up">▲</i>' : '<i class="mk down">▼</i>'; }
+  function times(rate, exp) { return exp > 0 ? (rate / exp).toFixed(1) + '×' : '—'; }
 
   // ---------- derived game data ----------
   var plays = T.plays, league = T.league;
@@ -79,7 +101,7 @@
 
   // ---------- state ----------
   var S = {
-    i: 0, frame: 0, playing: true, holdUntil: 0, last: 0, acc: 0,
+    i: 0, frame: 0, playing: !VIEWER, last: 0, endAt: 0, afterAt: 0, after: false, openedAt: {}, pushed: null, clearedAt: 0,
     overlay: true, pills: { duel: false, pressure: false, team: false },
     selected: null, pair: null, team: null, bg: 'replay'
   };
@@ -89,15 +111,39 @@
     var s = T.season[id]; if (s && s.role) return s.role === 'rusher';
     return plays.some(function (p) { return p.duels.some(function (d) { return d.rusherId == id; }); });
   }
+  // Which of this play's duels to show: the pair that has met most often before this play.
+  // Chosen from earlier plays only, so the pick never hints at this play's result.
   function bestDuel(list) {
+    var met = {};
+    for (var k = 0; k < S.i; k++) plays[k].duels.forEach(function (d) { var key = pairKey(d.rusherId, d.blockerId); met[key] = (met[key] || 0) + 1; });
     return list.slice().sort(function (a, b) {
-      return (a.closestYds - b.closestYds) || ((b.rusherWon ? 1 : 0) - (a.rusherWon ? 1 : 0));
+      return (met[pairKey(b.rusherId, b.blockerId)] || 0) - (met[pairKey(a.rusherId, a.blockerId)] || 0);
     })[0] || null;
   }
-  // A rep is scored once the rule's window has closed: the throw/end of tracking, or windowSec after the snap.
-  function closeFrame(p) { return Math.min(p.endFrame, p.snapFrame + league.windowSec * FPS); }
-  // Spoiler-safe: earlier plays always count; the play on screen counts only once its window has closed.
-  function scored(k) { return k < S.i || (k === S.i && S.frame >= closeFrame(plays[k])); }
+  // Simulated live: PRE-SNAP, LIVE, then AFTER-PLAY, which starts LATENCY_MS after the last frame while playing,
+  // or at once when paused on the last frame, opened on it by hash, or forced with phase=after.
+  function lastFrame(p) { return p.nFrames - 1; }
+  function phase() {
+    var p = plays[S.i];
+    if (S.after) return 'after';
+    return S.frame < p.snapFrame ? 'pre' : 'live';
+  }
+  // Spoiler-safe: earlier plays always count; the play on screen counts only in AFTER-PLAY.
+  // The tracking-based duel result is known DATA_LATENCY frames after the rule's window closes (the throw, the end of
+  // tracking, or windowSec after the snap). Wall time spent at the last frame while playing counts as frames.
+  var DATA_LATENCY_FRAMES = LATENCY_MS / 1000 * FPS;
+  function readyFrame(p) { return Math.min(p.endFrame, p.snapFrame + league.windowSec * FPS) + DATA_LATENCY_FRAMES; }
+  function effFrame() {
+    var p = plays[S.i], last = lastFrame(p);
+    if (S.frame < last || !S.playing || !S.endAt) return S.frame;
+    return last + (performance.now() - S.endAt) * FPS / 1000;
+  }
+  function duelReady() {
+    if (VIEWER && S.remoteReady != null) return S.remoteReady;
+    return S.after || effFrame() >= readyFrame(plays[S.i]);
+  }
+  // Spoiler-safe: earlier plays always count; the play on screen counts once its tracking result is ready.
+  function scored(k) { return k < S.i || (k === S.i && duelReady()); }
   function pairTally(r, b) {
     var reps = 0, wins = 0, seq = [];
     for (var k = 0; k <= S.i; k++) {
@@ -155,7 +201,7 @@
     cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
     if (S.overlay && $('bar').offsetHeight) barH = $('bar').offsetHeight;
     // reserve a band for the bar and one row of pills so an open pill never covers the field
-    var padX = 16, top = innerWidth <= 760 ? 96 : 10 + barH + 6 + PILL_MAX + 8, bottom = innerWidth <= 760 ? 124 : 52;
+    var padX = 16, top = VIEWER ? 16 : innerWidth <= 760 ? 96 : 10 + barH + 6 + PILL_MAX + 8, bottom = innerWidth <= 760 ? 124 : 52;
     var s = Math.min((innerWidth - 2 * padX) / 120, (innerHeight - top - bottom) / 53.3);
     view.s = s;
     view.ox = (innerWidth - 120 * s) / 2;
@@ -227,12 +273,13 @@
     var a = Math.floor(f), t = f - a, p = arr[Math.min(a, arr.length - 1)], q = arr[Math.min(a + 1, arr.length - 1)];
     return [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
   }
+  function cssVar(name, fallback) { var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim(); return v || fallback; }
+  // inside the win line: the rusher's colour; near: the blocker's colour; far: neutral grey
   function pressureColor(d) {
     var thr = league.thresholdYds;
-    if (d <= thr) return '#ff3b30';
-    if (d <= thr * 2) return '#ff9f0a';
-    if (d <= thr * 3) return '#ffd60a';
-    return 'rgba(255,255,255,0.55)';
+    if (d <= thr) return cssVar('--win', '#ff8a3d');
+    if (d <= thr * 3) return cssVar('--hold', '#4fc3ff');
+    return 'rgba(238,242,250,0.55)';
   }
 
   function drawPlayers(play, f) {
@@ -244,9 +291,10 @@
     var ringOnly = duel && duel.only != null && pos[duel.only] ? duel.only : null;
     if (duel && !duel.onPlay && S.selected != null && pos[S.selected]) ringOnly = S.selected;
 
-    // rusher -> QB line
+    // rusher -> QB line and tags only in AFTER-PLAY, as the replay of what happened; rings only before that
+    var replayMarks = phase() === 'after';
     var qbDist = null, qbCol = null;
-    if (ringR != null && pos[ringR] && pos[play.qbId]) {
+    if (replayMarks && ringR != null && pos[ringR] && pos[play.qbId]) {
       var a = pos[ringR], q = pos[play.qbId], d = dist(a, q), c = pressureColor(d);
       ctx.strokeStyle = c; ctx.lineWidth = 2.5; ctx.setLineDash([6, 5]);
       ctx.beginPath(); ctx.moveTo(X(a[0]), Y(a[1])); ctx.lineTo(X(q[0]), Y(q[1])); ctx.stroke(); ctx.setLineDash([]);
@@ -268,15 +316,16 @@
     // highlight rings, then name tags, on top of everything
     var hi = [ringB, ringR, ringOnly].filter(function (id) { return id != null && pos[id]; });
     hi.forEach(function (id) {
-      ctx.strokeStyle = id == ringR ? '#ff5a4e' : id == ringB ? '#4fc3ff' : '#ffcf3f';
+      ctx.strokeStyle = id == ringR ? cssVar('--win', '#ff8a3d') : id == ringB ? cssVar('--hold', '#4fc3ff') : cssVar('--accent', '#eef2fa');
       ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(X(pos[id][0]), Y(pos[id][1]), r + 4, 0, Math.PI * 2); ctx.stroke();
     });
     // the rusher's tag goes on the side away from the blocker, the blocker's on the other side
     var rusherAbove = !(ringR != null && ringB != null && pos[ringR] && pos[ringB]) || Y(pos[ringR][1]) <= Y(pos[ringB][1]);
+    if (!replayMarks) return;
     hi.forEach(function (id) {
       var cx = X(pos[id][0]), cy = Y(pos[id][1]), isR = id == ringR;
       var above = isR ? rusherAbove : id == ringB ? !rusherAbove : false;
-      var label = lastName(id) + (isR && qbDist != null ? ' · ' + qbDist.toFixed(1) + ' yd to QB now' : '');
+      var label = lastName(id) + (isR && qbDist != null ? ' · ' + qbDist.toFixed(1) + ' yd to QB at the end' : '');
       ctx.font = '700 11px ' + font; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       var w = ctx.measureText(label).width + 12, ly = above ? cy - r - 26 : cy + r + 10;
       ctx.fillStyle = 'rgba(0,0,0,0.78)'; roundRect(cx - w / 2, ly, w, 16, 8); ctx.fill();
@@ -296,7 +345,8 @@
   }
 
   // ---------- game chrome ----------
-  function chip(t) { return '<span class="sb-team" style="background:' + teamColor(t) + ';color:' + inkOn(teamColor(t)) + '">' + esc(t) + '</span>'; }
+  function teamVars(t) { return '--team:' + teamColor(t) + ';--team-ink:' + inkOn(teamColor(t)); }
+  function chip(t) { return '<span class="sb-team team-' + esc(t) + '" style="' + teamVars(t) + '">' + esc(t) + '</span>'; }
   function renderChrome() {
     var p = plays[S.i];
     $('sbTeams').innerHTML = chip(p.offense) + '<span class="sb-vs">vs</span>' + chip(p.defense);
@@ -311,9 +361,9 @@
     var p = plays[S.i];
     var t = (S.frame - p.snapFrame) / FPS;
     $('tClock').textContent = (t < 0 ? 'pre-snap ' : '+') + Math.abs(t).toFixed(1) + 's';
-    var done = S.frame >= p.nFrames - 1;
+    var done = phase() === 'after';
     $('playResult').textContent = done ? (RESULT[p.passResult] || p.passResult) : '';
-    $('playResult').style.color = done && (p.passResult === 'S' || p.passResult === 'IN') ? '#ff5a4e' : '';
+    $('playResult').classList.toggle('bad', done && (p.passResult === 'S' || p.passResult === 'IN'));
   }
 
   // ---------- overlay: bar ----------
@@ -322,7 +372,7 @@
     var box = $('chips'); box.innerHTML = '';
     teams.forEach(function (t) {
       var b = el('button', 'chip', esc(t));
-      b.style.background = teamColor(t); b.style.color = inkOn(teamColor(t));
+      b.setAttribute('style', teamVars(t)); b.classList.add('team-' + t);
       b.title = TEAM_NAME[t] ? TEAM_NAME[t] + ': team pill, players filtered to ' + t : t;
       var focus = teamFocus();
       if (focus === t) b.classList.add('active');
@@ -332,13 +382,14 @@
     });
   }
   function teamFocus() { return S.pills.team ? S.team : null; }
+  function touch(k) { if (S.pills[k]) S.openedAt[k] = performance.now(); }
   function setTeam(t) {
-    S.team = t; S.pills.team = !!t;
+    S.team = t; S.pills.team = !!t; touch('team');
     renderChips(); renderPicker(); renderOverlay();
   }
   function renderPicker() {
     picker.innerHTML = '';
-    var auto = el('option', null, 'Pick a player…'); auto.value = ''; picker.appendChild(auto);
+    var auto = el('option', null, 'Player…'); auto.value = ''; picker.appendChild(auto);
     teams.filter(function (t) { return !teamFocus() || teamFocus() === t; }).forEach(function (t) {
       var ids = Object.keys(duelPlayers).filter(function (id) { return P(id).team === t; });
       var rush = ids.filter(isRusher), block = ids.filter(function (id) { return !isRusher(id); });
@@ -356,14 +407,14 @@
   }
   picker.addEventListener('change', function () {
     S.selected = picker.value ? +picker.value : null; S.pair = null;
-    if (S.selected != null) S.pills.duel = true;
+    if (S.selected != null) { S.pills.duel = true; touch('duel'); }
     picker.blur(); renderOverlay(); draw();
   });
   document.querySelectorAll('.icon-btn[data-pill]').forEach(function (b) {
     b.addEventListener('click', function () {
       var k = b.getAttribute('data-pill');
       if (k === 'team') { setTeam(S.pills.team ? null : (S.team || plays[S.i].defense)); return; }
-      S.pills[k] = !S.pills[k]; renderOverlay(); draw();
+      S.pills[k] = !S.pills[k]; touch(k); renderOverlay(); draw();
     });
   });
   // Suggested matchup: the pair that meets most often in this game. Nothing is selected until it is clicked.
@@ -371,20 +422,31 @@
   if (hl) $('suggest').innerHTML = '<span>Suggested</span> ' + esc(lastName(hl[0])) + ' vs ' + esc(lastName(hl[1]));
   else $('suggest').hidden = true;
   $('suggest').addEventListener('click', function () {
-    S.pair = { r: hl[0], b: hl[1] }; S.selected = null; S.pills.duel = true;
+    S.pair = { r: hl[0], b: hl[1] }; S.selected = null; S.pills.duel = true; touch('duel');
     renderPicker(); renderOverlay(); draw();
   });
   $('barClose').addEventListener('click', hideAll);
   $('btnHide').addEventListener('click', function () { if (S.overlay) hideAll(); else showOverlay(); });
 
   // ---------- overlay: pills ----------
+  function duelLine(r, b, t) {
+    var rL = esc(lastName(r)), bL = esc(lastName(b)), exp = expectedOf(r);
+    var avg = exp ? '; ' + ALIGN_PLURAL[alignOf(r)] + ' averaged 1 in ' + oneIn(exp) + ' before tonight' : '';
+    var reps = t.reps + ' rep' + (t.reps > 1 ? 's' : '');
+    if (t.reps === 0) return rL + ' and ' + bL + ' have not met yet tonight.';
+    if (t.wins === 0) return bL + ' has stonewalled ' + rL + (t.reps === 1 ? ' on their only rep' : ' on all ' + reps) + ' tonight' + avg + '.';
+    return rL + ' has beaten ' + bL + ' on ' + t.wins + ' of ' + reps + ' tonight' + avg + '.';
+  }
+  function isPushed(r, b) { return !!S.pushed && S.pushed.rusherId == r && S.pushed.blockerId == b; }
   function renderDuel() {
     var box = $('pill-duel');
     var d = currentDuel();
     var head = '<div class="pill-head"><span>Trench duel · <span class="tag">' +
-      (d.mode === 'pinned' ? 'your pick' : d.mode === 'pair' || d.mode === 'headline' ? 'suggested matchup' : 'closest rush this play') + '</span></span>' +
-      '<span>spoiler-safe · win = within ' + league.thresholdYds + ' yd of QB in ' + league.windowSec + 's' +
-      (S.selected != null || S.pair ? ' <button data-act="auto">Clear ✕</button>' : '') + '</span></div>';
+      (d.mode === 'pinned' ? 'your pick' : d.mode === 'pair' || d.mode === 'headline' ? 'suggested matchup' : 'most-met pair this play') + '</span></span>' +
+      '<span>win = ≤' + league.thresholdYds + ' yd in ' + league.windowSec + 's' +
+      (S.selected != null || S.pair ? ' <button data-act="auto">Clear ✕</button>' : '') +
+      (d.rusherId != null ? ' <button id="pushDuel" class="push-btn' + (isPushed(d.rusherId, d.blockerId) ? ' on' : '') + '" data-act="push"' + (phase() === 'live' ? ' disabled title="Available after the play"' : '') + '>' + (isPushed(d.rusherId, d.blockerId) ? 'On air · Pull' : 'Push to stream') + '</button>' : '') +
+      '</span></div>';
     if (d.rusherId == null) {
       var who = d.only != null ? esc(tagName(d.only)) + ' has no trench reps yet tonight.' : 'No pass-rush duels on this play.';
       box.innerHTML = head + '<div class="muted">' + who + '</div>';
@@ -392,128 +454,246 @@
     }
     var r = d.rusherId, b = d.blockerId, t = pairTally(r, b);
     var rL = esc(lastName(r)), bL = esc(lastName(b));
-    var rAlign = alignOf(r), avg = ALIGN_PLURAL[rAlign] + ' average 1 in ' + oneIn(expectedOf(r));
-    var reps = t.reps + ' rep' + (t.reps > 1 ? 's' : '');
-    var line;
-    if (t.reps === 0) line = rL + ' and ' + bL + ' have not met yet tonight.';
-    else if (t.wins === 0) line = bL + ' has stonewalled ' + rL + (t.reps === 1 ? ' on their only rep' : ' on all ' + reps) + ' tonight; ' + avg + '.';
-    else line = rL + ' has beaten ' + bL + ' on ' + t.wins + ' of ' + reps + ' tonight; ' + avg + '.';
-    var thisRep = d.onPlay && !scored(S.i) ? '<b>in progress</b>' : d.onPlay ? (d.onPlay.rusherWon ? '<b style="color:var(--win)">rusher won</b>' : '<b style="color:var(--hold)">blocker held</b>') : '<span>not matched</span>';
-    var sr = T.season[r], sb = T.season[b];
+    var rAlign = alignOf(r), exp = expectedOf(r);
+    var line = duelLine(r, b, t);
+    var thisRep = !d.onPlay ? '<span>not matched</span>'
+      : !scored(S.i) ? '<b class="pending">pending</b>'
+      : d.onPlay.rusherWon ? '<b class="r">rusher won</b>' : '<b class="b">blocker held</b>';
+    var sr = SEASON[r], sb = SEASON[b];
     var rt = playerTally(r, true), bt = playerTally(b, false);
     var dots = t.seq.map(function (x) { return '<i class="dot' + (x.w ? ' w' : '') + (x.now ? ' now' : '') + '"></i>'; }).join('');
-    var rSeason = sr ? 'wins <b>' + pct(sr.winRate) + '</b> of ' + sr.reps + ' reps, <b>' + times(sr.winRate, expectedOf(r)) + '</b> what\'s expected for ' + ALIGN_ONE[rAlign] : 'no season data';
-    var bSeason = sb ? 'loses <b>' + pct(sb.winRate) + '</b> of ' + sb.reps + ' reps, <b>' + times(sb.winRate, expectedOf(b)) + '</b> what\'s expected for the rushers he faced' : 'no season data';
+    var rSeason = sr && sr.reps ? 'wins <b>' + pct(sr.wins / sr.reps) + '</b> (' + sr.wins + '/' + sr.reps + ')' + (exp ? ' · <b>' + times(sr.wins / sr.reps, exp) + '</b> exp. for ' + ALIGN_ONE[rAlign].replace(/^an? /, '') : '') : 'No earlier games yet';
+    var bExp = expectedOf(b);
+    var bSeason = sb && sb.reps ? 'loses <b>' + pct(sb.wins / sb.reps) + '</b> (' + sb.wins + '/' + sb.reps + ')' + (bExp ? ' · <b>' + times(sb.wins / sb.reps, bExp) + '</b> exp. vs rushers faced' : '') : 'No earlier games yet';
     box.innerHTML = head +
       '<div class="duel-grid"><div>' +
       '<div class="matchup"><span class="r">' + esc(tagName(r)) + '</span><span class="vs">vs</span><span class="b">' + esc(tagName(b)) + '</span></div>' +
       '<div class="tally"><div class="score"><span class="r">' + rL + ' <em>' + t.wins + '</em></span><em>–</em><span class="b"><em>' + (t.reps - t.wins) + '</em> ' + bL + '</span></div>' +
       '<div class="who">' + t.reps + ' rep' + (t.reps === 1 ? '' : 's') + ' · this play: ' + thisRep + '</div></div>' +
-      '<div class="dots" title="Each rep tonight, oldest first. Red = rusher won.">' + dots + '</div>' +
+      '<div class="dots" title="Each rep tonight, oldest first. Orange = rusher won, blue = blocker held.">' + dots + '</div>' +
       '</div><div class="oneliner">' + line + '</div></div>' +
       '<div class="ctx">' +
-      '<div title="Tonight vs all blockers: ' + rt.wins + ' of ' + rt.reps + '"><span class="r">●</span> <b>' + rL + '</b> <span class="ctx-k">season wks 1–8</span> ' + rSeason + '</div>' +
-      '<div title="Tonight vs all rushers: lost ' + bt.wins + ' of ' + bt.reps + '"><span class="b">●</span> <b>' + bL + '</b> <span class="ctx-k">season wks 1–8</span> ' + bSeason + '</div>' +
+      '<div title="Tonight vs all blockers: ' + rt.wins + ' of ' + rt.reps + '"><span class="r">●</span> <b>' + rL + '</b> <span class="ctx-k">' + BEFORE + '</span> ' + rSeason + '</div>' +
+      '<div title="Tonight vs all rushers: lost ' + bt.wins + ' of ' + bt.reps + '"><span class="b">●</span> <b>' + bL + '</b> <span class="ctx-k">' + BEFORE + '</span> ' + bSeason + '</div>' +
       '</div>';
+  }
+  // The play's pressure story from PFF-charted events: the most serious event (sack, then hit, then hurry), earliest first.
+  var EVENT_RANK = { sack: 0, hit: 1, hurry: 2 };
+  function pressureStory(play) {
+    var ev = (play.pressureEvents || []).slice().sort(function (a, b) {
+      return ((EVENT_RANK[a.type] == null ? 9 : EVENT_RANK[a.type]) - (EVENT_RANK[b.type] == null ? 9 : EVENT_RANK[b.type])) || ((a.seconds == null ? 99 : a.seconds) - (b.seconds == null ? 99 : b.seconds));
+    });
+    if (!ev.length) return null;
+    var e = ev[0], secs = e.seconds != null ? e.seconds.toFixed(1) + ' s' : '';
+    var full = P(e.rusherId).name || ('#' + e.jersey), last = e.rusherId != null ? lastName(e.rusherId) : full;
+    var jersey = '#' + (e.jersey != null ? e.jersey : P(e.rusherId).jersey);
+    // sacks are timed to the sack; hits and hurries to when the ball came out
+    var when = !secs ? '' : e.type === 'sack' ? ' in ' + secs : ' · ball out at ' + secs;
+    var text = e.blockerId != null || e.blockerPos
+      ? jersey + ' ' + full + ' beat the ' + (e.blockerPos || shortName(e.blockerId)) + ' — ' + e.type + when
+      : e.chargedElsewhere
+        ? jersey + ' ' + full + ' ' + e.type + when
+        : e.type === 'sack' && secs
+          ? jersey + ' ' + last + ' sack — QB held it ' + secs + ', no blocker charged'
+          : jersey + ' ' + last + ' ' + e.type + when + ' — no blocker charged';
+    return { e: e, text: text, more: ev.length - 1, short: jersey + ' ' + e.type + (secs ? ' · ' + secs : ''),
+      big: e.type === 'sack' || e.type === 'hit' };
   }
   function renderPressure() {
     var box = $('pill-pressure'), play = plays[S.i];
-    var head = '<div class="pill-head"><span>Pressure · this play</span><span><i class="key-thr"></i>' + league.thresholdYds + '-yd win line <i class="key-now"></i>now</span></div>';
-    if (!play.duels.length) { box.innerHTML = head + '<div class="muted">No duels recorded on this play.</div>'; return; }
-    // one row per rusher (double teams collapse)
+    var after = phase() === 'after';
+    if (!after && !duelReady()) {
+      box.innerHTML = '<div class="pill-head"><span>Pressure · this play</span><span>PFF-charted</span></div>' +
+        '<div class="muted">' + (phase() === 'pre' ? 'Result ~2 s after the play.' : 'Live play: result in ~2 s after the whistle.') + '</div>';
+      return;
+    }
+    var st = after ? pressureStory(play) : null;
+    var head = '<div class="pill-head"><span>Pressure · this play</span><span>PFF-charted</span></div>';
+    var story = !after
+      ? '<div class="pr-top">Charted pressure after the play</div>'
+      : st
+        ? '<div class="pr-top">' + esc(st.text) + (st.more ? ' <span class="pr-sub">+' + st.more + ' more</span>' : '') + '</div>'
+        : '<div class="pr-top">No charted pressure' + (play.timeToThrow != null ? ' — ball out in ' + play.timeToThrow.toFixed(1) + ' s' : '') + '</div>';
+    if (!play.duels.length) { box.innerHTML = head + story; return; }
+    // tracking-based closest-rusher bars, one row per rusher (double teams collapse)
     var rows = {}, order = [];
     play.duels.forEach(function (d) {
       if (!rows[d.rusherId]) { rows[d.rusherId] = { r: d.rusherId, b: [], d: d }; order.push(d.rusherId); }
       rows[d.rusherId].b.push(d.blockerId);
     });
-    var qb = play.players.filter(function (p) { return p.nflId == play.qbId; })[0];
-    var qxy = qb ? lerpXY(qb.xy, S.frame) : null;
-    var done = scored(S.i);
-    order.forEach(function (id) {
-      var pl = play.players.filter(function (p) { return p.nflId == id; })[0];
-      rows[id].live = pl && qxy ? dist(lerpXY(pl.xy, S.frame), qxy) : null;
-    });
-    // before the window closes, rank and draw by live distance only: the result is not known yet
-    order.sort(function (a, b) {
-      return done ? rows[a].d.closestYds - rows[b].d.closestYds : (rows[a].live == null ? 1e9 : rows[a].live) - (rows[b].live == null ? 1e9 : rows[b].live);
-    });
+    order.sort(function (a, b) { return rows[a].d.closestYds - rows[b].d.closestYds; });
     var top = rows[order[0]].d;
     var tp = top.secToPressure != null
-      ? 'within ' + league.thresholdYds + ' yd at <b>' + top.secToPressure.toFixed(1) + 's</b>'
-      : 'not within ' + league.thresholdYds + ' yd inside ' + league.windowSec + 's';
+      ? '≤' + league.thresholdYds + ' yd at <b>' + top.secToPressure.toFixed(1) + 's</b>'
+      : 'never ≤' + league.thresholdYds + ' yd';
     var MAX = 10, sel = currentDuel();
     var bars = order.map(function (id) {
-      var x = rows[id], d = x.d, ld = x.live, shown = done ? d.closestYds : ld;
-      var w = shown == null ? 0 : Math.max(4, (1 - Math.min(shown, MAX) / MAX) * 100);
-      var live = ld == null ? '' : '<span class="live" style="left:calc(' + (1 - Math.min(ld, MAX) / MAX) * 100 + '% - 1px)"></span>';
-      var dbl = x.b.length > 1 ? ' ×2' : '';
+      var x = rows[id], d = x.d, w = Math.max(4, (1 - Math.min(d.closestYds, MAX) / MAX) * 100);
+      var dbl = x.b.length > 1 ? ' ×' + x.b.length : '';
       return '<div class="barrow' + (sel.rusherId == id ? ' sel' : '') + '" data-id="' + id + '" title="vs ' + esc(x.b.map(shortName).join(' + ')) + '">' +
         '<span class="nm">' + esc(lastName(id)) + dbl + '</span>' +
-        '<span class="track"><span class="fill' + (done ? (d.rusherWon ? ' w' : '') : ' now') + '" style="width:' + w + '%"></span>' +
-        '<span class="thr" style="left:' + (1 - league.thresholdYds / MAX) * 100 + '%"></span>' + live + '</span>' +
-        '<span class="v">' + (shown == null ? '–' : shown.toFixed(1)) + '</span></div>';
+        '<span class="track"><span class="fill' + (d.rusherWon ? ' w' : '') + '" style="width:' + w + '%"></span>' +
+        '<span class="thr" style="left:' + (1 - league.thresholdYds / MAX) * 100 + '%"></span></span>' +
+        '<span class="v">' + d.closestYds.toFixed(1) + '</span></div>';
     }).join('');
-    var summary = done
-      ? '<div class="pr-top">Closest: <span class="r">' + esc(tagName(top.rusherId)) + '</span></div><div class="pr-sub">closest in first ' + league.windowSec + 's or to the throw: <b>' + top.closestYds.toFixed(1) + ' yd</b> · ' + tp + '</div>'
-      : '<div class="pr-top">Closest now: <span class="r">' + esc(tagName(top.rusherId)) + '</span></div><div class="pr-sub">live distance to the QB · result after ' + league.windowSec + 's or the throw</div>';
-    box.innerHTML = head + summary +
-      '<div class="bars" title="' + (done ? 'Bar = how close each rusher got to the QB in the first ' + league.windowSec + 's or until the throw/sack (longer = closer)' : 'Bar = live distance to the QB (longer = closer)') + '">' + bars + '</div>';
+    box.innerHTML = head + story +
+      '<div class="pr-sub" title="Tracking: closest approach to the QB in the first ' + league.windowSec + ' s or until the throw">Tracking: <b>' + esc(lastName(top.rusherId)) + '</b> closest, ' + top.closestYds.toFixed(1) + ' yd · ' + tp + '</div>' +
+      '<div class="bars" title="Bar = how close each rusher got to the QB in the first ' + league.windowSec + 's or until the throw/sack (longer = closer)">' + bars + '</div>';
     box.querySelectorAll('.barrow').forEach(function (row) {
       row.onclick = function () { S.selected = +row.getAttribute('data-id'); renderPicker(); renderOverlay(); draw(); };
     });
   }
+  // the Pressure button: its short label and a subtle suggestion after a sack or hit (never auto-opens)
+  function renderPressureButton() {
+    var btn = document.querySelector('.icon-btn[data-pill=pressure]'), span = btn && btn.querySelector('span');
+    if (!btn) return;
+    var st = phase() === 'after' ? pressureStory(plays[S.i]) : null;
+    if (span) span.textContent = st ? st.short : 'Pressure';
+    btn.classList.toggle('suggested', !!(st && st.big) && !S.pills.pressure);
+  }
+
+  // ---------- bar slots: situation, offense look, defense ----------
+  var slots = (function () {
+    var box = el('div', 'slots');
+    [['sit', 'Situation'], ['off', 'Offense'], ['def', 'Defense']].forEach(function (k) {
+      var sl = el('span', 'slot slot-' + k[0]); sl.title = k[1];
+      sl.innerHTML = '<span class="slot-v"></span>';
+      box.appendChild(sl);
+    });
+    var bar = $('bar'), first = bar.querySelector('.icon-btn[data-pill]');
+    bar.insertBefore(box, first);
+    return box;
+  })();
+  function isThirdLong(p) { return p.down === 3 && p.yardsToGo >= 7; }
+  function defenseLook(p) {
+    var d = TEAMS[p.defense];
+    if (!d) return 'No earlier games yet';
+    var src = d.defense || d;
+    var k = isThirdLong(p) && src.thirdLongBlitz ? 'thirdLongBlitz' : 'blitz', v = src[k];
+    if (!v || !v.of) return 'No earlier games yet';
+    return 'Blitz ' + (k === 'thirdLongBlitz' ? '3rd&long ' : '') + v.n + ' of ' + v.of;
+  }
+  function renderSlots() {
+    var p = plays[S.i], ph = phase();
+    var set = function (k, v) { slots.querySelector('.slot-' + k + ' .slot-v').textContent = v; };
+    set('sit', ordinal(p.down) + ' & ' + p.yardsToGo + ' · Q' + p.quarter + ' ' + p.clock + ' · ' + p.offense + ' ball');
+    if (ph === 'after') {
+      var med = TEAMS[p.offense] && TEAMS[p.offense].offense && TEAMS[p.offense].offense.timeToThrowMedian;
+      set('off', p.timeToThrow != null ? 'Ball out ' + p.timeToThrow.toFixed(1) + ' s' + (typeof med === 'number' ? ' · med ' + med.toFixed(2) : '') : 'No throw');
+      set('def', p.rushers != null ? p.rushers + ' rushed / ' + (p.blockers != null ? p.blockers : '—') + ' blocked' : '—');
+    } else {
+      // pre-snap look; unchanged through LIVE
+      set('off', [p.personnel, p.formation, p.box != null ? 'Box ' + p.box : null].filter(Boolean).join(' · ') || '—');
+      set('def', defenseLook(p));
+    }
+  }
   var TEAM_LINES = {
-    thirdDownBlitzRate: function (n, x, y) { return n + ' blitzes on ' + x + ' of 3rd downs, league average ' + y + '.'; },
-    blitzRate: function (n, x, y) { return n + ' blitzes on ' + x + ' of dropbacks, league average ' + y + '.'; },
-    manRate: function (n, x, y) { return n + ' plays man coverage on ' + x + ' of man-or-zone dropbacks, league average ' + y + '.'; },
-    pressureRate: function (n, x, y) { return n + ' pressures the QB on ' + x + ' of dropbacks, league average ' + y + '.'; },
-    sackRate: function (n, x, y) { return n + ' sacks the QB on ' + x + ' of dropbacks, league average ' + y + '.'; }
+    thirdLongBlitz: function (n, x, c, y) { return n + ' blitzes on ' + x + ' of 3rd-and-long ' + c + ', league average ' + y + '.'; },
+    blitz: function (n, x, c, y) { return n + ' blitzes on ' + x + ' of dropbacks ' + c + ', league average ' + y + '.'; },
+    man: function (n, x, c, y) { return n + ' plays man coverage on ' + x + ' of man-or-zone dropbacks ' + c + ', league average ' + y + '.'; },
+    pressure: function (n, x, c, y) { return n + ' pressures the QB on ' + x + ' of dropbacks ' + c + ', league average ' + y + '.'; },
+    sack: function (n, x, c, y) { return n + ' sacks the QB on ' + x + ' of dropbacks ' + c + ', league average ' + y + '.'; }
   };
+  function tget(obj, k) { return obj ? (obj[k] != null ? obj[k] : obj.defense && obj.defense[k] != null ? obj.defense[k] : obj.offense ? obj.offense[k] : null) : null; }
   function renderTeam() {
-    var box = $('pill-team'), t = S.team, data = T.teams && T.teams[t], lg = league.team || {};
+    var box = $('pill-team'), t = S.team, data = TEAMS[t];
     var name = TEAM_NAME[t] || t;
-    var head = '<div class="pill-head"><span><b class="team-dot" style="background:' + teamColor(t) + '"></b>' + esc(t) + ' · <span class="tag">team</span> · season wks 1–8</span>' +
-      '<span>' + (data && data.defense ? data.defense.plays + ' def. plays · ' : '') + 'vs league</span></div>';
-    if (!data || !data.defense) { box.innerHTML = head + '<div class="muted">No team data for ' + esc(t) + ' in this file.</div>'; return; }
-    var D = data.defense, O = data.offense || {};
+    var head = '<div class="pill-head"><span><b class="team-dot team-' + esc(t) + '" style="' + teamVars(t) + '"></b>' + esc(t) + ' · <span class="tag">team</span> · ' + BEFORE + '</span><span>vs league</span></div>';
+    if (!data) { box.innerHTML = head + '<div class="muted">No earlier games yet.</div>'; return; }
     // the ready-to-read line: the tendency furthest from league average, relative to the league figure.
     // Blitzing less yet pressuring more (or the reverse) is one story, scored by both gaps together.
     var pick = null, best = 0, line = '';
     Object.keys(TEAM_LINES).forEach(function (k) {
-      if (D[k] == null || !lg[k]) return;
-      var gap = Math.abs(D[k] / lg[k] - 1);
+      var v = rateOf(tget(data, k)), lv = rateOf(tget(LG_TEAM, k));
+      if (v == null || !lv) return;
+      var gap = Math.abs(v / lv - 1);
       if (gap > best) { best = gap; pick = k; }
     });
-    if (pick) line = TEAM_LINES[pick](name, pct(D[pick]), pct(lg[pick]));
-    if (D.blitzRate != null && D.pressureRate != null && lg.blitzRate && lg.pressureRate) {
-      var bg = D.blitzRate / lg.blitzRate - 1, pg = D.pressureRate / lg.pressureRate - 1;
+    if (pick) line = TEAM_LINES[pick](name, pct(rateOf(tget(data, pick))), countOf(tget(data, pick)), pct(rateOf(tget(LG_TEAM, pick))) + lgCount(tget(LG_TEAM, pick), ' of '));
+    var B = tget(data, 'blitz'), Pr = tget(data, 'pressure'), lb = rateOf(tget(LG_TEAM, 'blitz')), lp = rateOf(tget(LG_TEAM, 'pressure'));
+    if (rateOf(B) != null && rateOf(Pr) != null && lb && lp) {
+      var bg = rateOf(B) / lb - 1, pg = rateOf(Pr) / lp - 1;
       if (bg * pg < 0 && Math.abs(bg) + Math.abs(pg) > best) {
         line = bg < 0
-          ? name + ' blitzes less than average (' + pct(D.blitzRate) + ' vs ' + pct(lg.blitzRate) + ') but still pressures on ' + pct(D.pressureRate) + ' of dropbacks.'
-          : name + ' blitzes more than average (' + pct(D.blitzRate) + ' vs ' + pct(lg.blitzRate) + ') but pressures on only ' + pct(D.pressureRate) + ' of dropbacks.';
+          ? name + ' blitzes less than average (' + pct(rateOf(B)) + ' ' + countOf(B) + ' vs ' + pct(lb) + lgCount(tget(LG_TEAM, 'blitz'), ' of ') + ') but still pressures on ' + pct(rateOf(Pr)) + ' of dropbacks ' + countOf(Pr) + '.'
+          : name + ' blitzes more than average (' + pct(rateOf(B)) + ' ' + countOf(B) + ' vs ' + pct(lb) + lgCount(tget(LG_TEAM, 'blitz'), ' of ') + ') but pressures on only ' + pct(rateOf(Pr)) + ' of dropbacks ' + countOf(Pr) + '.';
       }
     }
-    function stat(label, k, src, l) {
-      var v = (src || D)[k], lv = (l || lg)[k];
+    function stat(label, short, k) {
+      var x = tget(data, k), v = rateOf(x), lv = rateOf(tget(LG_TEAM, k));
       if (v == null) return '';
-      var cls = lv != null ? (v > lv * 1.1 ? ' hi' : v < lv * 0.9 ? ' lo' : '') : '';
-      return '<div class="st"><span class="sl">' + label + '</span><b class="sv' + cls + '">' + pct(v) + '</b>' + (lv != null ? '<span class="lg">lg ' + pct(lv) + '</span>' : '') + '</div>';
+      return '<div class="st" title="' + esc(label) + ': ' + pct(v) + (x && x.of ? ' (' + x.n + ' of ' + x.of + ')' : '') + (lv != null ? ', league ' + pct(lv) + lgCount(tget(LG_TEAM, k), ' of ') : '') + '"><span class="sl">' + short + '</span><b class="sv">' + pct(v) + '</b>' +
+        (x && x.of ? '<span class="ct">' + x.n + '/' + x.of + '</span>' : '') + arrow(v, lv) + (lv != null ? '<span class="lg" title="League ' + pct(lv) + lgCount(tget(LG_TEAM, k), ' of ') + '">lg ' + pct(lv) + '</span>' : '') + '</div>';
     }
-    var cov = (D.coverages || []).slice(0, 3).map(function (c) { return esc(c.name) + ' <b>' + pct(c.share) + '</b>'; }).join(' · ');
+    var covs = tget(data, 'coverages') || [];
+    // coverages share one denominator, so it is shown once: "Cov. of 93: Quarters 37% (34) · …"
+    var top3 = covs.slice(0, 3), ofs = top3.map(function (c) { return c.of; });
+    var sameOf = ofs.length && ofs.every(function (o) { return o && o === ofs[0]; });
+    var cov = top3.map(function (c) {
+      var r = c.of ? c.n / c.of : c.share;
+      return esc(c.name) + ' <b>' + pct(r) + '</b>' + (c.of ? (sameOf ? ' (' + c.n + ')' : ' ' + c.n + '/' + c.of) : '');
+    }).join(' · ');
+    var covLabel = sameOf ? 'Cov. of ' + ofs[0] : 'Coverages';
     box.innerHTML = head +
       (line ? '<div class="oneliner">' + esc(line) + '</div>' : '') +
       '<div class="stats">' +
-      stat('Blitz', 'blitzRate') + stat('3rd-down blitz', 'thirdDownBlitzRate') + stat('Pressure', 'pressureRate') +
-      (D.manRate != null ? '<div class="st"><span class="sl">Man / zone</span><b class="sv">' + Math.round(D.manRate * 100) + '/' + Math.round((1 - D.manRate) * 100) + '</b>' + (lg.manRate != null ? '<span class="lg">lg ' + Math.round(lg.manRate * 100) + '/' + Math.round((1 - lg.manRate) * 100) + '</span>' : '') + '</div>' : '') +
-      stat('Sack', 'sackRate') + stat('Off. pressured', 'pressureAllowedRate', O) +
+      stat('Blitz', 'Blitz', 'blitz') + stat('3rd-and-long blitz', '3rd&L', 'thirdLongBlitz') + stat('Pressure', 'Press.', 'pressure') +
+      stat('Man coverage (vs zone)', 'Man', 'man') + stat('Sack', 'Sack', 'sack') + stat('Offense: pressure allowed', 'Off. press.', 'pressureAllowed') +
       '</div>' +
-      (cov ? '<div class="cov"><span class="sl">Top coverages</span> ' + cov + '</div>' : '');
+      (cov ? '<div class="cov"><span class="sl">' + covLabel + '</span> ' + cov + '</div>' : '');
   }
   $('pill-duel').addEventListener('click', function (e) {
-    if (e.target.getAttribute('data-act') === 'auto') { S.selected = null; S.pair = null; renderPicker(); renderOverlay(); draw(); }
+    var act = e.target.getAttribute('data-act');
+    if (act === 'auto') { S.selected = null; S.pair = null; renderPicker(); renderOverlay(); draw(); }
+    if (act === 'push') {
+      var d = currentDuel();
+      S.pushed = isPushed(d.rusherId, d.blockerId) ? null : { kind: 'duel', rusherId: d.rusherId, blockerId: d.blockerId };
+      S.clearedAt = 0; renderOverlay();
+    }
   });
 
+  // ---------- stream: controller -> viewer ----------
+  var chan = null;
+  try { chan = new BroadcastChannel('trench-duel'); } catch (err) { chan = null; }
+  function postState() {
+    if (VIEWER || !chan) return;
+    chan.postMessage({ type: 'state', play: S.i + 1, frame: S.frame, phase: phase(), ready: duelReady(), playing: S.playing, bg: S.bg, pushed: S.pushed });
+  }
+  var onAir = el('span', 'on-air'); onAir.id = 'onAir'; onAir.hidden = true;
+  $('bar').insertBefore(onAir, $('bar').querySelector('.slots') || $('bar').querySelector('.icon-btn[data-pill]'));
+  var CLEARED_NOTE_MS = 2500;
+  function renderOnAir() {
+    if (S.pushed) { onAir.textContent = 'ON AIR: ' + lastName(S.pushed.rusherId) + ' vs ' + lastName(S.pushed.blockerId); onAir.hidden = false; onAir.classList.remove('cleared'); }
+    else if (S.clearedAt && performance.now() - S.clearedAt < CLEARED_NOTE_MS) { onAir.textContent = 'Cleared at snap'; onAir.hidden = false; onAir.classList.add('cleared'); }
+    else { onAir.hidden = true; onAir.classList.remove('cleared'); }
+  }
+  // viewer: the pushed Duel card, with the same spoiler-safe tally as the controller
+  function renderViewerCard() {
+    var card = $('viewerCard');
+    if (!card) return;
+    if (!S.pushed) { card.style.display = 'none'; card.innerHTML = ''; return; }
+    var r = S.pushed.rusherId, b = S.pushed.blockerId, t = pairTally(r, b);
+    card.innerHTML =
+      '<div class="vc-head"><span class="vc-r">' + esc(tagName(r)) + '</span><span class="vc-vs">vs</span><span class="vc-b">' + esc(tagName(b)) + '</span></div>' +
+      '<div class="vc-tally"><span class="vc-n">' + t.wins + '</span> – <span class="vc-n">' + (t.reps - t.wins) + '</span> <span class="vc-reps">' + t.reps + ' rep' + (t.reps === 1 ? '' : 's') + '</span></div>' +
+      '<div class="vc-line">' + duelLine(r, b, t) + '</div>' +
+      '<div class="vc-dots">' + t.seq.map(function (x) { return '<i class="dot ' + (x.w ? 'win' : 'hold') + '"></i>'; }).join('') + '</div>' +
+      '<div class="vc-src">Tracking: within ' + league.thresholdYds + ' yd of the QB inside ' + league.windowSec + ' s · ' + BEFORE + ' context</div>';
+    card.style.display = '';
+  }
+  function applyRemote(m) {
+    if (!m || m.type !== 'state') return;
+    if (m.bg && m.bg !== S.bg) setBg(m.bg);
+    var idx = Math.max(0, Math.min(plays.length - 1, (m.play || 1) - 1));
+    if (idx !== S.i) gotoPlay(idx);
+    S.frame = Math.max(0, Math.min(lastFrame(plays[S.i]), +m.frame || 0));
+    S.after = m.phase === 'after'; S.playing = false; S.remoteReady = m.ready != null ? !!m.ready : null;
+    S.pushed = m.pushed || null;
+    renderOverlay(); renderTick(); draw();
+  }
+
   function renderOverlay() {
+    if (VIEWER) { renderChrome(); renderViewerCard(); return; }
     overlay.classList.toggle('hidden', !S.overlay);
     document.querySelectorAll('.icon-btn[data-pill]').forEach(function (b) { b.classList.toggle('on', !!S.pills[b.getAttribute('data-pill')]); });
     $('pill-duel').classList.toggle('open', S.pills.duel);
@@ -523,11 +703,14 @@
     if (S.overlay && S.pills.duel) renderDuel();
     if (S.overlay && S.pills.pressure) renderPressure();
     if (S.overlay && S.pills.team && S.team) renderTeam();
+    renderSlots(); renderPressureButton(); renderOnAir();
     renderChrome();
     if (!dragged) placeOverlayDefault();
+    postState();
   }
   function hideAll() {
-    S.overlay = false; S.pills.duel = false; S.pills.pressure = false; S.pills.team = false; S.team = null;
+    // the panic button also pulls whatever is on the stream
+    S.overlay = false; S.pills.duel = false; S.pills.pressure = false; S.pills.team = false; S.team = null; S.pushed = null;
     renderChips(); renderPicker(); renderOverlay(); draw();
   }
   function showOverlay() { S.overlay = true; renderOverlay(); draw(); }
@@ -557,7 +740,7 @@
 
   // ---------- canvas click: pick a player ----------
   cv.addEventListener('click', function (e) {
-    if (!S.overlay || S.bg === 'video') return;
+    if (VIEWER || !S.overlay || S.bg === 'video') return;
     var play = plays[S.i], best = null, bd = 1e9;
     play.players.forEach(function (p) {
       var xy = lerpXY(p.xy, S.frame), d = Math.hypot(X(xy[0]) - e.clientX, Y(xy[1]) - e.clientY);
@@ -570,43 +753,89 @@
 
   // ---------- playback ----------
   function gotoPlay(i) {
-    S.i = (i + plays.length) % plays.length; S.frame = 0; S.acc = 0; S.holdUntil = 0;
+    S.i = (i + plays.length) % plays.length; S.frame = 0; S.endAt = 0; S.afterAt = 0; S.after = false;
+    lastPhase = phase();
     renderOverlay(); renderTick(); draw();
+  }
+  // AFTER-PLAY: the result is out; the play now counts and the overlay shows what happened
+  function enterAfter(ts) {
+    S.after = true; S.afterAt = ts || performance.now(); S.frame = lastFrame(plays[S.i]);
+    onPhase();
   }
   function togglePlay() {
     S.playing = !S.playing;
-    if (S.playing && S.frame >= plays[S.i].nFrames - 1) { S.frame = 0; S.holdUntil = 0; }
+    var p = plays[S.i];
+    if (!S.playing && !S.after && S.frame >= lastFrame(p)) enterAfter();
+    else if (S.playing && S.after) { S.frame = 0; S.endAt = 0; S.after = false; onPhase(); }
     renderChrome();
+  }
+  // Re-render only when the phase changes, so nothing in the overlay moves during LIVE.
+  var lastPhase = null;
+  function onPhase() {
+    var ph = phase();
+    if (ph === lastPhase) return;
+    var prev = lastPhase; lastPhase = ph;
+    // the pushed card comes off the stream the moment the next play goes live
+    if (ph === 'live' && S.pushed && !VIEWER) {
+      S.pushed = null; S.clearedAt = performance.now();
+      setTimeout(renderOnAir, CLEARED_NOTE_MS + 50);
+    }
+    // at the snap, pills the streamer opened more than PILL_STALE_MS ago fold away while the replay plays
+    if (prev === 'pre' && ph === 'live' && S.playing) {
+      var now = performance.now();
+      ['duel', 'pressure', 'team'].forEach(function (k) {
+        if (S.pills[k] && now - (S.openedAt[k] || 0) > PILL_STALE_MS) { S.pills[k] = false; if (k === 'team') S.team = null; }
+      });
+      renderChips(); renderPicker();
+    }
+    renderOverlay(); renderTick(); draw();
   }
   $('btnPrev').onclick = function () { gotoPlay(S.i - 1); };
   $('btnNext').onclick = function () { gotoPlay(S.i + 1); };
   $('btnPlay').onclick = togglePlay;
+  // Next phase: PRE-SNAP -> LIVE -> AFTER-PLAY by hand, paused. In Broadcast it is the only way to reveal the result.
+  function nextPhase() {
+    var p = plays[S.i], ph = phase();
+    S.playing = false;
+    if (ph === 'pre') { S.frame = p.snapFrame; onPhase(); }
+    else if (ph === 'live') enterAfter();
+    renderChrome(); renderOverlay(); renderTick(); draw();
+  }
+  var nextBtn = el('button', null, 'Next phase'); nextBtn.id = 'nextPhase'; nextBtn.title = 'Next phase: pre-snap → live → after the play (N)';
+  $('controls').insertBefore(nextBtn, $('tClock'));
+  nextBtn.onclick = nextPhase;
 
-  var lastPressureFrame = -1, lastScored = null;
+  var lastPost = 0, lastReady = null;
   function loop(ts) {
     var dt = S.last ? Math.min(ts - S.last, 200) : 0; S.last = ts;
-    var play = plays[S.i];
+    var play = plays[S.i], end = lastFrame(play);
     if (S.playing) {
-      if (S.frame < play.nFrames - 1) {
-        S.frame = Math.min(play.nFrames - 1, S.frame + dt * FPS / 1000);
-        if (S.frame >= play.nFrames - 1) S.holdUntil = ts + HOLD_MS;
-      } else if (S.holdUntil && ts >= S.holdUntil) {
+      if (S.frame < end) {
+        S.frame = Math.min(end, S.frame + dt * FPS / 1000);
+        if (S.frame >= end) S.endAt = ts;
+      } else if (!S.after) {
+        // simulated broadcast latency: the result arrives LATENCY_MS after the last frame
+        if (!S.endAt) S.endAt = ts;
+        if (ts - S.endAt >= LATENCY_MS) enterAfter(ts);
+      } else if (ts - S.afterAt >= AFTER_HOLD_MS) {
         gotoPlay(S.i + 1);
-      } else if (!S.holdUntil) S.holdUntil = ts + HOLD_MS;
+      }
       draw(); renderTick();
-      var fi = Math.floor(S.frame);
-      if (S.overlay && S.pills.pressure && fi !== lastPressureFrame) { lastPressureFrame = fi; renderPressure(); }
-      var sc = scored(S.i);
-      if (sc !== lastScored) { lastScored = sc; if (S.overlay && S.pills.duel) renderDuel(); }
+      onPhase();
+      var rd = duelReady();
+      if (rd !== lastReady) { lastReady = rd; renderOverlay(); }
+      if (ts - lastPost >= 100) { lastPost = ts; postState(); }
     }
     requestAnimationFrame(loop);
   }
 
   // ---------- keyboard ----------
   document.addEventListener('keydown', function (e) {
+    if (VIEWER) return;
     var k = e.key, inForm = /^(SELECT|INPUT|TEXTAREA)$/.test(e.target.tagName);
     if (k === 'Tab') { e.preventDefault(); if (inForm) e.target.blur(); if (S.overlay) { S.overlay = false; renderOverlay(); draw(); } else showOverlay(); return; }
     if (k === 'Escape' || ((k === 'h' || k === 'H') && !inForm)) { e.preventDefault(); if (inForm) e.target.blur(); hideAll(); return; }
+    if (!inForm && (k === 'n' || k === 'N')) { e.preventDefault(); nextPhase(); return; }
     if (inForm || S.bg === 'video') return;
     if (k === 'ArrowRight') { e.preventDefault(); gotoPlay(S.i + 1); }
     else if (k === 'ArrowLeft') { e.preventDefault(); gotoPlay(S.i - 1); }
@@ -625,7 +854,7 @@
   function renderLabel() {
     $('replayLabel').innerHTML = S.bg === 'video'
       ? '<b>' + BROADCAST.tag + '</b>' + esc(BROADCAST.label)
-      : '<b>REPLAY</b>' + esc(String(T.meta.label || 'Replay from tracking data — not live'));
+      : '<b>SIMULATED LIVE</b>· ' + esc(String(T.meta.date || '').slice(-4) + ' DATA · ' + T.meta.away + ' @ ' + T.meta.home + ' Wk ' + T.meta.week);
   }
   function setBg(mode) {
     var idx = -1;
@@ -637,8 +866,9 @@
     S.bg = mode;
     var box = $('video');
     if (mode === 'video') {
+      // the clip starts before the snap: the result is revealed only with Next phase (N)
       gotoPlay(idx);
-      S.frame = plays[idx].nFrames - 1; S.playing = false; S.holdUntil = 0;
+      S.playing = false; renderOverlay(); renderTick();
       if (!box.firstChild) {
         var f = document.createElement('iframe');
         f.src = BROADCAST.src; f.title = 'Broadcast clip';
@@ -650,7 +880,7 @@
       box.hidden = false;
     } else {
       box.innerHTML = ''; box.hidden = true;
-      S.frame = 0; S.playing = true; S.holdUntil = 0;
+      S.frame = 0; S.playing = true; S.endAt = 0; S.after = false;
     }
     document.body.classList.toggle('broadcast', mode === 'video');
     document.querySelectorAll('#bgSeg button').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-bg') === S.bg); });
@@ -667,25 +897,44 @@
   renderChips(); renderPicker(); renderOverlay(); renderTick();
   window.addEventListener('resize', resize);
   resize();
-  // #play=N&frame=F&duel=1&pressure=1&team=CLE&bg=video opens paused on a given moment (used for screenshots)
+  // #play=N&frame=F&phase=after&duel=1&pressure=1&team=CLE&bg=video opens paused on a given moment (used for screenshots)
   function applyHash() {
     var hash = {};
     location.hash.replace(/^#/, '').split('&').forEach(function (kv) { var a = kv.split('='); if (a[0]) hash[a[0]] = decodeURIComponent(a[1] || ''); });
     if (hash.bg !== 'video' && S.bg === 'video') setBg('replay');
     if (hash.play) {
       gotoPlay(parseInt(hash.play, 10) - 1);
-      if (hash.frame) { S.frame = Math.max(0, Math.min(plays[S.i].nFrames - 1, parseFloat(hash.frame) || 0)); S.playing = false; }
+      if (hash.frame) { S.frame = Math.max(0, Math.min(lastFrame(plays[S.i]), parseFloat(hash.frame) || 0)); S.playing = false; }
+      if (hash.phase === 'after' || (hash.frame && S.frame >= lastFrame(plays[S.i]))) { S.playing = false; S.after = true; S.frame = lastFrame(plays[S.i]); }
     }
     S.pills.pressure = hash.pressure === '1';
     S.pills.duel = hash.duel === '1';
+    S.openedAt = { duel: performance.now(), pressure: performance.now(), team: performance.now() };
     if (S.pills.duel && S.selected == null && !S.pair && hl) S.pair = { r: hl[0], b: hl[1] };
     if (hash.team && teams.indexOf(hash.team) >= 0) { S.team = hash.team; S.pills.team = true; }
     else { S.team = null; S.pills.team = false; }
-    S.overlay = true;
+    S.overlay = true; lastPhase = phase();
     renderChips(); renderPicker(); renderChrome(); renderOverlay(); renderTick(); draw();
-    if (hash.bg === 'video') setBg('video');
+    if (hash.bg === 'video') { setBg('video'); if (hash.phase === 'after') enterAfter(); }
   }
-  applyHash();
-  window.addEventListener('hashchange', applyHash);
+  var SYNC_NOTICE = 'Stream sync needs a local server: <code>python3 -m http.server 8000 -d overlay</code>, then open <code>http://localhost:8000</code>';
+  if (VIEWER) {
+    ['overlay', 'controls', 'hint'].forEach(function (id) { if ($(id)) $(id).style.display = 'none'; });
+    // #demo=push&play=67&phase=after renders the suggested pair's card from the hash alone (for screenshots)
+    var vh = {};
+    location.hash.replace(/^#/, '').split('&').forEach(function (kv) { var a = kv.split('='); if (a[0]) vh[a[0]] = decodeURIComponent(a[1] || ''); });
+    if (vh.play) gotoPlay(parseInt(vh.play, 10) - 1);
+    if (vh.phase === 'after') { S.after = true; S.frame = lastFrame(plays[S.i]); }
+    if (vh.demo === 'push' && hl) S.pushed = { kind: 'duel', rusherId: hl[0], blockerId: hl[1] };
+    S.playing = false;
+    renderOverlay(); renderTick(); draw();
+    // the demo hash is a fixed screenshot: it does not follow a controller
+    if (chan && vh.demo !== 'push') { chan.onmessage = function (e) { applyRemote(e.data); }; chan.postMessage({ type: 'hello' }); }
+  } else {
+    applyHash();
+    window.addEventListener('hashchange', applyHash);
+    if (chan) chan.onmessage = function (e) { if (e.data && e.data.type === 'hello') postState(); };
+  }
+  if (location.protocol === 'file:') notice(SYNC_NOTICE);
   requestAnimationFrame(loop);
 })();
