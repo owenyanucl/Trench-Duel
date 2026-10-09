@@ -105,7 +105,7 @@ def build(data_dir, game_id, play_id):
     sack_valid = snap is not None and sack is not None and sack >= snap
     result = {
         'schemaVersion': 1, 'gameId': game_id, 'playId': play_id,
-        'source': f'https://github.com/owenyanucl/wedobewinningtho/blob/main/data/tracking/tracking_{game_id}.csv',
+        'source': f'https://github.com/owenyanucl/Trench-Duel/blob/main/data/tracking/tracking_{game_id}.csv',
         'units': {'position': 'yards', 'time': 'seconds', 'frameRateHz': 10},
         'coordinates': {'mode': 'raw dataset', 'attackDirection': direction, 'startLineX': line_x,
                         'firstDownTargetX': target_x, 'opponentGoalLineX': goal_x},
