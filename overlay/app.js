@@ -20,7 +20,7 @@
   // Broadcast mode: real footage of one play in this game, shown behind the overlay.
   var BROADCAST = {
     playId: 2349,
-    src: 'https://www.youtube-nocookie.com/embed/e7VpmQzDL4k?autoplay=1&mute=1&controls=0&playsinline=1&loop=1&playlist=e7VpmQzDL4k&cc_load_policy=0&rel=0&modestbranding=1',
+    src: 'https://www.youtube-nocookie.com/embed/e7VpmQzDL4k?autoplay=1&mute=1&controls=0&playsinline=1&loop=1&playlist=e7VpmQzDL4k&cc_load_policy=0&rel=0&modestbranding=1&end=22',
     tag: 'BROADCAST CLIP',
     label: 'Cleveland Browns YouTube · CLE @ MIN 2021 Wk 4, play shown: Q3 11:29 McKinley sack',
     fileNotice: 'Broadcast mode needs a local server: <code>python3 -m http.server 8000 -d overlay</code>, then open <code>http://localhost:8000</code>'
@@ -94,9 +94,14 @@
       return (a.closestYds - b.closestYds) || ((b.rusherWon ? 1 : 0) - (a.rusherWon ? 1 : 0));
     })[0] || null;
   }
+  // A rep is scored once the rule's window has closed: the throw/end of tracking, or windowSec after the snap.
+  function closeFrame(p) { return Math.min(p.endFrame, p.snapFrame + league.windowSec * FPS); }
+  // Spoiler-safe: earlier plays always count; the play on screen counts only once its window has closed.
+  function scored(k) { return k < S.i || (k === S.i && S.frame >= closeFrame(plays[k])); }
   function pairTally(r, b) {
     var reps = 0, wins = 0, seq = [];
     for (var k = 0; k <= S.i; k++) {
+      if (!scored(k)) continue;
       plays[k].duels.forEach(function (d) {
         if (d.rusherId == r && d.blockerId == b) { reps++; if (d.rusherWon) wins++; seq.push({ w: d.rusherWon, now: k === S.i }); }
       });
@@ -106,6 +111,7 @@
   function playerTally(id, asRusher) {
     var reps = 0, wins = 0;
     for (var k = 0; k <= S.i; k++) {
+      if (!scored(k)) continue;
       // one rep per play per player, even when double-teamed
       var mine = plays[k].duels.filter(function (d) { return asRusher ? d.rusherId == id : d.blockerId == id; });
       if (!mine.length) continue;
@@ -154,8 +160,19 @@
     view.s = s;
     view.ox = (innerWidth - 120 * s) / 2;
     view.oy = top + ((innerHeight - top - bottom) - 53.3 * s) / 2;
+    layoutVideo();
     if (!dragged) placeOverlayDefault();
     draw();
+  }
+  // Broadcast footage starts where the field starts, so open pills never cover it.
+  // The iframe covers that band at 16:9 and is cropped, which also pushes YouTube's title bar and controls out of view.
+  function layoutVideo() {
+    var box = $('video'), f = box.firstChild, top = Math.round(view.oy), w = innerWidth, h = innerHeight - top;
+    box.style.top = top + 'px';
+    if (!f) return;
+    var fw = Math.max(w, h * 16 / 9) * 1.08, fh = fw * 9 / 16;
+    f.style.width = fw + 'px'; f.style.height = fh + 'px';
+    f.style.left = (w - fw) / 2 + 'px'; f.style.top = (h - fh) / 2 + 'px';
   }
   // field y=53.3 is drawn at the top of the screen
   function X(x) { return view.ox + x * view.s; }
@@ -248,15 +265,20 @@
     var b = lerpXY(play.ball, f);
     ctx.fillStyle = '#8b4a1c'; ctx.strokeStyle = '#f5e6d0'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.ellipse(X(b[0]), Y(b[1]), Math.max(3, s * 0.45), Math.max(2.2, s * 0.3), 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    // highlight rings and name tags on top of everything
-    [ringB, ringR, ringOnly].forEach(function (id) {
-      if (id == null || !pos[id]) return;
+    // highlight rings, then name tags, on top of everything
+    var hi = [ringB, ringR, ringOnly].filter(function (id) { return id != null && pos[id]; });
+    hi.forEach(function (id) {
+      ctx.strokeStyle = id == ringR ? '#ff5a4e' : id == ringB ? '#4fc3ff' : '#ffcf3f';
+      ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(X(pos[id][0]), Y(pos[id][1]), r + 4, 0, Math.PI * 2); ctx.stroke();
+    });
+    // the rusher's tag goes on the side away from the blocker, the blocker's on the other side
+    var rusherAbove = !(ringR != null && ringB != null && pos[ringR] && pos[ringB]) || Y(pos[ringR][1]) <= Y(pos[ringB][1]);
+    hi.forEach(function (id) {
       var cx = X(pos[id][0]), cy = Y(pos[id][1]), isR = id == ringR;
-      ctx.strokeStyle = isR ? '#ff5a4e' : id == ringB ? '#4fc3ff' : '#ffcf3f';
-      ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(cx, cy, r + 4, 0, Math.PI * 2); ctx.stroke();
+      var above = isR ? rusherAbove : id == ringB ? !rusherAbove : false;
       var label = lastName(id) + (isR && qbDist != null ? ' · ' + qbDist.toFixed(1) + ' yd to QB now' : '');
       ctx.font = '700 11px ' + font; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      var w = ctx.measureText(label).width + 12, ly = isR ? cy - r - 26 : cy + r + 10;
+      var w = ctx.measureText(label).width + 12, ly = above ? cy - r - 26 : cy + r + 10;
       ctx.fillStyle = 'rgba(0,0,0,0.78)'; roundRect(cx - w / 2, ly, w, 16, 8); ctx.fill();
       ctx.fillStyle = isR && qbCol ? qbCol : '#fff'; ctx.fillText(label, cx, ly + 8.5);
     });
@@ -376,12 +398,12 @@
     if (t.reps === 0) line = rL + ' and ' + bL + ' have not met yet tonight.';
     else if (t.wins === 0) line = bL + ' has stonewalled ' + rL + (t.reps === 1 ? ' on their only rep' : ' on all ' + reps) + ' tonight; ' + avg + '.';
     else line = rL + ' has beaten ' + bL + ' on ' + t.wins + ' of ' + reps + ' tonight; ' + avg + '.';
-    var thisRep = d.onPlay ? (d.onPlay.rusherWon ? '<b style="color:var(--win)">rusher won</b>' : '<b style="color:var(--hold)">blocker held</b>') : '<span>not matched</span>';
+    var thisRep = d.onPlay && !scored(S.i) ? '<b>in progress</b>' : d.onPlay ? (d.onPlay.rusherWon ? '<b style="color:var(--win)">rusher won</b>' : '<b style="color:var(--hold)">blocker held</b>') : '<span>not matched</span>';
     var sr = T.season[r], sb = T.season[b];
     var rt = playerTally(r, true), bt = playerTally(b, false);
     var dots = t.seq.map(function (x) { return '<i class="dot' + (x.w ? ' w' : '') + (x.now ? ' now' : '') + '"></i>'; }).join('');
     var rSeason = sr ? 'wins <b>' + pct(sr.winRate) + '</b> of ' + sr.reps + ' reps, <b>' + times(sr.winRate, expectedOf(r)) + '</b> what\'s expected for ' + ALIGN_ONE[rAlign] : 'no season data';
-    var bSeason = sb ? 'loses <b>' + pct(sb.winRate) + '</b> of ' + sb.reps + ' reps, <b>' + times(sb.winRate, expectedOf(b)) + '</b> what\'s expected where he lines up' : 'no season data';
+    var bSeason = sb ? 'loses <b>' + pct(sb.winRate) + '</b> of ' + sb.reps + ' reps, <b>' + times(sb.winRate, expectedOf(b)) + '</b> what\'s expected for the rushers he faced' : 'no season data';
     box.innerHTML = head +
       '<div class="duel-grid"><div>' +
       '<div class="matchup"><span class="r">' + esc(tagName(r)) + '</span><span class="vs">vs</span><span class="b">' + esc(tagName(b)) + '</span></div>' +
@@ -404,29 +426,38 @@
       if (!rows[d.rusherId]) { rows[d.rusherId] = { r: d.rusherId, b: [], d: d }; order.push(d.rusherId); }
       rows[d.rusherId].b.push(d.blockerId);
     });
-    order.sort(function (a, b) { return rows[a].d.closestYds - rows[b].d.closestYds; });
-    var top = rows[order[0]].d;
     var qb = play.players.filter(function (p) { return p.nflId == play.qbId; })[0];
     var qxy = qb ? lerpXY(qb.xy, S.frame) : null;
+    var done = scored(S.i);
+    order.forEach(function (id) {
+      var pl = play.players.filter(function (p) { return p.nflId == id; })[0];
+      rows[id].live = pl && qxy ? dist(lerpXY(pl.xy, S.frame), qxy) : null;
+    });
+    // before the window closes, rank and draw by live distance only: the result is not known yet
+    order.sort(function (a, b) {
+      return done ? rows[a].d.closestYds - rows[b].d.closestYds : (rows[a].live == null ? 1e9 : rows[a].live) - (rows[b].live == null ? 1e9 : rows[b].live);
+    });
+    var top = rows[order[0]].d;
     var tp = top.secToPressure != null
       ? 'within ' + league.thresholdYds + ' yd at <b>' + top.secToPressure.toFixed(1) + 's</b>'
       : 'not within ' + league.thresholdYds + ' yd inside ' + league.windowSec + 's';
     var MAX = 10, sel = currentDuel();
     var bars = order.map(function (id) {
-      var x = rows[id], d = x.d, w = Math.max(4, (1 - Math.min(d.closestYds, MAX) / MAX) * 100);
-      var pl = play.players.filter(function (p) { return p.nflId == id; })[0];
-      var live = '';
-      if (pl && qxy) { var ld = dist(lerpXY(pl.xy, S.frame), qxy); live = '<span class="live" style="left:calc(' + (1 - Math.min(ld, MAX) / MAX) * 100 + '% - 1px)"></span>'; }
+      var x = rows[id], d = x.d, ld = x.live, shown = done ? d.closestYds : ld;
+      var w = shown == null ? 0 : Math.max(4, (1 - Math.min(shown, MAX) / MAX) * 100);
+      var live = ld == null ? '' : '<span class="live" style="left:calc(' + (1 - Math.min(ld, MAX) / MAX) * 100 + '% - 1px)"></span>';
       var dbl = x.b.length > 1 ? ' ×2' : '';
       return '<div class="barrow' + (sel.rusherId == id ? ' sel' : '') + '" data-id="' + id + '" title="vs ' + esc(x.b.map(shortName).join(' + ')) + '">' +
         '<span class="nm">' + esc(lastName(id)) + dbl + '</span>' +
-        '<span class="track"><span class="fill' + (d.rusherWon ? ' w' : '') + '" style="width:' + w + '%"></span>' +
+        '<span class="track"><span class="fill' + (done ? (d.rusherWon ? ' w' : '') : ' now') + '" style="width:' + w + '%"></span>' +
         '<span class="thr" style="left:' + (1 - league.thresholdYds / MAX) * 100 + '%"></span>' + live + '</span>' +
-        '<span class="v">' + d.closestYds.toFixed(1) + '</span></div>';
+        '<span class="v">' + (shown == null ? '–' : shown.toFixed(1)) + '</span></div>';
     }).join('');
-    box.innerHTML = head +
-      '<div class="pr-top">Closest: <span class="r">' + esc(tagName(top.rusherId)) + '</span></div><div class="pr-sub">closest before the throw: <b>' + top.closestYds.toFixed(1) + ' yd</b> · ' + tp + '</div>' +
-      '<div class="bars" title="Bar = how close each rusher got to the QB (longer = closer)">' + bars + '</div>';
+    var summary = done
+      ? '<div class="pr-top">Closest: <span class="r">' + esc(tagName(top.rusherId)) + '</span></div><div class="pr-sub">closest in first ' + league.windowSec + 's or to the throw: <b>' + top.closestYds.toFixed(1) + ' yd</b> · ' + tp + '</div>'
+      : '<div class="pr-top">Closest now: <span class="r">' + esc(tagName(top.rusherId)) + '</span></div><div class="pr-sub">live distance to the QB · result after ' + league.windowSec + 's or the throw</div>';
+    box.innerHTML = head + summary +
+      '<div class="bars" title="' + (done ? 'Bar = how close each rusher got to the QB in the first ' + league.windowSec + 's or until the throw/sack (longer = closer)' : 'Bar = live distance to the QB (longer = closer)') + '">' + bars + '</div>';
     box.querySelectorAll('.barrow').forEach(function (row) {
       row.onclick = function () { S.selected = +row.getAttribute('data-id'); renderPicker(); renderOverlay(); draw(); };
     });
@@ -434,7 +465,7 @@
   var TEAM_LINES = {
     thirdDownBlitzRate: function (n, x, y) { return n + ' blitzes on ' + x + ' of 3rd downs, league average ' + y + '.'; },
     blitzRate: function (n, x, y) { return n + ' blitzes on ' + x + ' of dropbacks, league average ' + y + '.'; },
-    manRate: function (n, x, y) { return n + ' plays man coverage on ' + x + ' of dropbacks, league average ' + y + '.'; },
+    manRate: function (n, x, y) { return n + ' plays man coverage on ' + x + ' of man-or-zone dropbacks, league average ' + y + '.'; },
     pressureRate: function (n, x, y) { return n + ' pressures the QB on ' + x + ' of dropbacks, league average ' + y + '.'; },
     sackRate: function (n, x, y) { return n + ' sacks the QB on ' + x + ' of dropbacks, league average ' + y + '.'; }
   };
@@ -445,17 +476,17 @@
       '<span>' + (data && data.defense ? data.defense.plays + ' def. plays · ' : '') + 'vs league</span></div>';
     if (!data || !data.defense) { box.innerHTML = head + '<div class="muted">No team data for ' + esc(t) + ' in this file.</div>'; return; }
     var D = data.defense, O = data.offense || {};
-    // the ready-to-read line: the tendency furthest from league average, in percentage points.
+    // the ready-to-read line: the tendency furthest from league average, relative to the league figure.
     // Blitzing less yet pressuring more (or the reverse) is one story, scored by both gaps together.
     var pick = null, best = 0, line = '';
     Object.keys(TEAM_LINES).forEach(function (k) {
-      if (D[k] == null || lg[k] == null) return;
-      var gap = Math.abs(D[k] - lg[k]);
+      if (D[k] == null || !lg[k]) return;
+      var gap = Math.abs(D[k] / lg[k] - 1);
       if (gap > best) { best = gap; pick = k; }
     });
     if (pick) line = TEAM_LINES[pick](name, pct(D[pick]), pct(lg[pick]));
-    if (D.blitzRate != null && D.pressureRate != null && lg.blitzRate != null && lg.pressureRate != null) {
-      var bg = D.blitzRate - lg.blitzRate, pg = D.pressureRate - lg.pressureRate;
+    if (D.blitzRate != null && D.pressureRate != null && lg.blitzRate && lg.pressureRate) {
+      var bg = D.blitzRate / lg.blitzRate - 1, pg = D.pressureRate / lg.pressureRate - 1;
       if (bg * pg < 0 && Math.abs(bg) + Math.abs(pg) > best) {
         line = bg < 0
           ? name + ' blitzes less than average (' + pct(D.blitzRate) + ' vs ' + pct(lg.blitzRate) + ') but still pressures on ' + pct(D.pressureRate) + ' of dropbacks.'
@@ -488,7 +519,7 @@
     $('pill-duel').classList.toggle('open', S.pills.duel);
     $('pill-pressure').classList.toggle('open', S.pills.pressure);
     $('pill-team').classList.toggle('open', S.pills.team && !!S.team);
-    $('suggest').classList.toggle('on', !!S.pair && S.pills.duel);
+    $('suggest').classList.toggle('on', S.pills.duel && S.selected == null && (!!S.pair || currentDuel().mode === 'headline'));
     if (S.overlay && S.pills.duel) renderDuel();
     if (S.overlay && S.pills.pressure) renderPressure();
     if (S.overlay && S.pills.team && S.team) renderTeam();
@@ -551,7 +582,7 @@
   $('btnNext').onclick = function () { gotoPlay(S.i + 1); };
   $('btnPlay').onclick = togglePlay;
 
-  var lastPressureFrame = -1;
+  var lastPressureFrame = -1, lastScored = null;
   function loop(ts) {
     var dt = S.last ? Math.min(ts - S.last, 200) : 0; S.last = ts;
     var play = plays[S.i];
@@ -565,6 +596,8 @@
       draw(); renderTick();
       var fi = Math.floor(S.frame);
       if (S.overlay && S.pills.pressure && fi !== lastPressureFrame) { lastPressureFrame = fi; renderPressure(); }
+      var sc = scored(S.i);
+      if (sc !== lastScored) { lastScored = sc; if (S.overlay && S.pills.duel) renderDuel(); }
     }
     requestAnimationFrame(loop);
   }
@@ -612,6 +645,7 @@
         f.allow = 'autoplay; encrypted-media; picture-in-picture';
         f.referrerPolicy = 'strict-origin-when-cross-origin';
         box.appendChild(f);
+        layoutVideo();
       }
       box.hidden = false;
     } else {
@@ -634,16 +668,24 @@
   window.addEventListener('resize', resize);
   resize();
   // #play=N&frame=F&duel=1&pressure=1&team=CLE&bg=video opens paused on a given moment (used for screenshots)
-  var hash = {};
-  location.hash.replace(/^#/, '').split('&').forEach(function (kv) { var a = kv.split('='); if (a[0]) hash[a[0]] = a[1]; });
-  if (hash.play) {
-    gotoPlay(parseInt(hash.play, 10) - 1);
-    if (hash.frame) { S.frame = Math.min(plays[S.i].nFrames - 1, parseFloat(hash.frame)); S.playing = false; }
+  function applyHash() {
+    var hash = {};
+    location.hash.replace(/^#/, '').split('&').forEach(function (kv) { var a = kv.split('='); if (a[0]) hash[a[0]] = decodeURIComponent(a[1] || ''); });
+    if (hash.bg !== 'video' && S.bg === 'video') setBg('replay');
+    if (hash.play) {
+      gotoPlay(parseInt(hash.play, 10) - 1);
+      if (hash.frame) { S.frame = Math.max(0, Math.min(plays[S.i].nFrames - 1, parseFloat(hash.frame) || 0)); S.playing = false; }
+    }
+    S.pills.pressure = hash.pressure === '1';
+    S.pills.duel = hash.duel === '1';
+    if (S.pills.duel && S.selected == null && !S.pair && hl) S.pair = { r: hl[0], b: hl[1] };
+    if (hash.team && teams.indexOf(hash.team) >= 0) { S.team = hash.team; S.pills.team = true; }
+    else { S.team = null; S.pills.team = false; }
+    S.overlay = true;
+    renderChips(); renderPicker(); renderChrome(); renderOverlay(); renderTick(); draw();
+    if (hash.bg === 'video') setBg('video');
   }
-  if (hash.pressure === '1') S.pills.pressure = true;
-  if (hash.duel === '1') { S.pills.duel = true; if (S.selected == null && !S.pair && hl) S.pair = { r: hl[0], b: hl[1] }; }
-  if (hash.team && teams.indexOf(hash.team) >= 0) { S.team = hash.team; S.pills.team = true; }
-  renderChips(); renderPicker(); renderChrome(); renderOverlay(); renderTick(); draw();
-  if (hash.bg === 'video') setBg('video');
+  applyHash();
+  window.addEventListener('hashchange', applyHash);
   requestAnimationFrame(loop);
 })();

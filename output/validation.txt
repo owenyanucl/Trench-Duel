@@ -1,4 +1,4 @@
-Rusher-plays: 36263
+Rusher-plays: 36263 (every Pass Rush rusher-play with tracking, blocked or unblocked; season.csv counts only rusher-plays against a charted blocker)
 Definition: within 2.0 yds of the QB inside 3.0s of the snap (or before the throw)
 Tracking 'win' rate: 6.7%   PFF pressure rate: 11.6%
 When tracking says win, PFF charted a pressure 66.8% of the time (5.7x the base rate)
@@ -9,3 +9,9 @@ pffPressure  False  True
 won                      
 False        31243   2594
 True           806   1620
+
+By alignment and threshold (same unit, edge and interior alignments only; pressure credited to that rusher):
+  edge     2.0 yds  rusher-plays 22194  win rate 7.7%  precision 67.0%  recall 40.9%
+  edge     2.5 yds  rusher-plays 22194  win rate 13.8%  precision 52.9%  recall 57.6%
+  interior 2.0 yds  rusher-plays 11630  win rate 4.4%  precision 58.7%  recall 31.6%
+  interior 2.5 yds  rusher-plays 11630  win rate 16.1%  precision 25.6%  recall 50.9%

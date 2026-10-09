@@ -1,6 +1,7 @@
 """Trench Duel: who is winning each pass rusher vs blocker battle, rep by rep.
 
-A rep is one play on which PFF charted an offensive player blocking a pass rusher.
+A rep is one play on which PFF charted an offensive player blocking a pass rusher;
+a double-teamed rusher has two reps on that play but one rusher-play.
 The rusher wins the rep when tracking puts him within THRESHOLD_YDS of the
 quarterback inside WINDOW_SEC of the snap (cut short if the ball is thrown first).
 Interior linemen start closer to the quarterback than edge rushers, so every rep
@@ -9,7 +10,7 @@ compared on wins over that expectation.
 
 Outputs:
   output/reps.csv              every rep in weeks 1-8
-  output/season.csv            per-player rep totals
+  output/season.csv            per-player totals: rusher-plays for rushers, reps for blockers
   output/validation.txt        how the tracking definition agrees with PFF pressures
   output/teams.csv             per-team blitz, coverage and pressure rates on defense, pressure allowed on offense
   output/*.png                 charts
@@ -78,7 +79,10 @@ def rusher_closest(track, pff_game, windows):
 
 
 def build_reps(plays, pff, games):
-    """One row per (play, blocker, rusher) rep across every game."""
+    """One row per (play, blocker, rusher) rep across every game, and one row per (play, rusher) rusher-play.
+
+    A double-teamed rusher has one rep per blocker but one rusher-play, so rusher totals and the
+    alignment expectation come from rusher-plays and blocker totals from reps."""
     blocks = pff.loc[(pff["pff_role"] == "Pass Block") & pff["pff_nflIdBlockedPlayer"].notna(),
                      ["gameId", "playId", "nflId", "pff_nflIdBlockedPlayer", "pff_blockType"]]
     blocks = blocks.rename(columns={"nflId": "blockerId", "pff_nflIdBlockedPlayer": "rusherId"})
@@ -102,13 +106,18 @@ def build_reps(plays, pff, games):
     reps = reps.merge(aligned, on=["gameId", "playId", "rusherId"], how="left")
     reps["align"] = np.select([reps["pff_positionLinedUp"].isin(INTERIOR), reps["pff_positionLinedUp"].isin(EDGE)],
                               ["interior", "edge"], "other")
-    reps["expected"] = reps.groupby("align")["rusherWon"].transform("mean")
-    return reps, rush
+    keys = ["gameId", "playId", "rusherId"]
+    assert (reps.groupby(keys)[["rusherWon", "closestYds", "align"]].nunique(dropna=False) <= 1).all().all()
+    rusher_plays = reps.drop_duplicates(keys).drop(columns=["blockerId", "pff_blockType"]).reset_index(drop=True)
+    expected = rusher_plays.groupby("align")["rusherWon"].mean()
+    rusher_plays["expected"] = rusher_plays["align"].map(expected)
+    reps["expected"] = reps["align"].map(expected)
+    return reps, rusher_plays, rush
 
 
 def validate(rush, pff):
     """Agreement between the tracking definition and PFF's hand-charted pressures, per rusher-play."""
-    p = pff.loc[pff["pff_role"] == "Pass Rush", ["gameId", "playId", "nflId", "pff_hit", "pff_hurry", "pff_sack"]]
+    p = pff.loc[pff["pff_role"] == "Pass Rush", ["gameId", "playId", "nflId", "pff_positionLinedUp", "pff_hit", "pff_hurry", "pff_sack"]]
     p["pffPressure"] = p[["pff_hit", "pff_hurry", "pff_sack"]].fillna(0).sum(axis=1) > 0
     v = rush.merge(p.rename(columns={"nflId": "rusherId"}), on=["gameId", "playId", "rusherId"])
     v["won"] = v["closestYds"] <= THRESHOLD_YDS
@@ -118,7 +127,7 @@ def validate(rush, pff):
     recall = tp / ct[True].sum()
     base = v["pffPressure"].mean()
     lines = [
-        f"Rusher-plays: {len(v)}",
+        f"Rusher-plays: {len(v)} (every Pass Rush rusher-play with tracking, blocked or unblocked; season.csv counts only rusher-plays against a charted blocker)",
         f"Definition: within {THRESHOLD_YDS} yds of the QB inside {WINDOW_SEC}s of the snap (or before the throw)",
         f"Tracking 'win' rate: {v['won'].mean():.1%}   PFF pressure rate: {base:.1%}",
         f"When tracking says win, PFF charted a pressure {precision:.1%} of the time ({precision / base:.1f}x the base rate)",
@@ -126,13 +135,24 @@ def validate(rush, pff):
         "",
         "Crosstab (rows: tracking win, cols: PFF pressure):",
         ct.to_string(),
+        "",
+        "By alignment and threshold (same unit, edge and interior alignments only; pressure credited to that rusher):",
     ]
+    v["align"] = np.select([v["pff_positionLinedUp"].isin(INTERIOR), v["pff_positionLinedUp"].isin(EDGE)],
+                           ["interior", "edge"], "other")
+    for align in ("edge", "interior"):
+        a = v[v["align"] == align]
+        for yds in (2.0, 2.5):
+            won = a["closestYds"] <= yds
+            lines.append(f"  {align:<8} {yds:.1f} yds  rusher-plays {len(a)}  win rate {won.mean():.1%}  "
+                         f"precision {a.loc[won, 'pffPressure'].mean():.1%}  recall {won[a['pffPressure']].mean():.1%}")
     return "\n".join(lines)
 
 
-def season_table(reps, players):
+def season_table(reps, rusher_plays, players):
+    """Rushers count rusher-plays; blockers count reps, one per blocker per play."""
     agg = {"reps": ("rusherWon", "size"), "wins": ("rusherWon", "sum"), "expected": ("expected", "mean")}
-    as_rusher = reps.groupby("rusherId").agg(**agg).rename_axis("nflId")
+    as_rusher = rusher_plays.groupby("rusherId").agg(**agg).rename_axis("nflId")
     as_blocker = reps.groupby("blockerId").agg(**agg).rename_axis("nflId")
     as_rusher["role"] = "rusher"
     as_blocker["role"] = "blocker"
@@ -153,7 +173,7 @@ def charts(reps, season):
     ax.scatter(top["expected"] * 100, top["displayName"], color="#111", marker="|", s=300, zorder=3,
                label="expected for where he lines up")
     ax.set_xlabel(f"Reps won (%)  ·  within {THRESHOLD_YDS} yds of the QB inside {WINDOW_SEC:g} s of the snap")
-    ax.set_title("Pass rushers who beat their blocker most often beyond expectation\n2021 weeks 1-8, min 150 reps")
+    ax.set_title("Pass rushers who beat their blocker most often beyond expectation\n2021 weeks 1-8, min 150 rusher-plays")
     ax.legend(loc="lower right", frameon=False, fontsize=9)
     for s in ("top", "right"):
         ax.spines[s].set_visible(False)
@@ -198,7 +218,7 @@ def team_table(plays, pff):
     return teams, league
 
 
-def demo_game(game_id, plays, players, games, pff, reps, season, teams, team_league):
+def demo_game(game_id, plays, players, games, pff, reps, rusher_plays, season, teams, team_league):
     track = pd.read_csv(os.path.join(DATA, "tracking", f"tracking_{game_id}.csv"))
     flip = track["playDirection"] == "left"
     track.loc[flip, "x"] = 120 - track.loc[flip, "x"]
@@ -259,8 +279,8 @@ def demo_game(game_id, plays, players, games, pff, reps, season, teams, team_lea
                  "label": f"Replay of 2021 Week {int(g['week'])} {g['visitorTeamAbbr']} @ {g['homeTeamAbbr']} from NFL tracking data — not live"},
         "players": player_map,
         "season": season_map,
-        "league": {"repWinRate": round(float(reps["rusherWon"].mean()), 4), "thresholdYds": THRESHOLD_YDS, "windowSec": WINDOW_SEC,
-                   "byAlign": {k: round(float(v), 4) for k, v in reps.groupby("align")["rusherWon"].mean().items()},
+        "league": {"repWinRate": round(float(rusher_plays["rusherWon"].mean()), 4), "thresholdYds": THRESHOLD_YDS, "windowSec": WINDOW_SEC,
+                   "byAlign": {k: round(float(v), 4) for k, v in rusher_plays.groupby("align")["rusherWon"].mean().items()},
                    "team": team_league},
         "teams": {},
         "plays": out_plays,
@@ -289,19 +309,20 @@ def main():
     os.makedirs(OUT, exist_ok=True)
 
     plays, players, games, pff = load_tables()
-    reps, rush = build_reps(plays, pff, games)
+    reps, rusher_plays, rush = build_reps(plays, pff, games)
     reps.to_csv(os.path.join(OUT, "reps.csv"), index=False)
     report = validate(rush, pff)
     with open(os.path.join(OUT, "validation.txt"), "w") as f:
         f.write(report + "\n")
     print(report)
 
-    season = season_table(reps, players)
+    season = season_table(reps, rusher_plays, players)
     season.to_csv(os.path.join(OUT, "season.csv"), index=False)
     pairs = charts(reps, season)
-    print(f"\nReps: {len(reps)}  league rusher win rate: {reps['rusherWon'].mean():.1%}")
-    print("By alignment:", reps.groupby("align")["rusherWon"].mean().round(3).to_dict())
-    print("Top rushers over expected (min 150 reps):")
+    print(f"\nReps (blocker–rusher pairs): {len(reps)}; rusher-plays: {len(rusher_plays)}")
+    print(f"League rusher win rate: {rusher_plays['rusherWon'].mean():.1%}")
+    print("By alignment:", rusher_plays.groupby("align")["rusherWon"].mean().round(3).to_dict())
+    print("Top rushers over expected (min 150 rusher-plays):")
     print(season[(season["role"] == "rusher") & (season["reps"] >= 150)].nlargest(10, "overExpected")
           [["displayName", "officialPosition", "reps", "winRate", "expected", "overExpected"]].round(3).to_string(index=False))
     print("Most-contested single-game duels:")
@@ -320,7 +341,7 @@ def main():
     print("Demo game teams:")
     print(csv[csv["team"].isin([g["visitorTeamAbbr"], g["homeTeamAbbr"]])][cols + ["coverages"]].round(3).to_string(index=False))
 
-    n = demo_game(args.game, plays, players, games, pff, reps, season, teams, team_league)
+    n = demo_game(args.game, plays, players, games, pff, reps, rusher_plays, season, teams, team_league)
     print(f"\nWrote overlay/data/demo_game.js with {n} plays from game {args.game}")
 
 

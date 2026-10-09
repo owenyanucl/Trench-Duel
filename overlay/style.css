@@ -75,7 +75,8 @@ button, select { font: inherit; color: inherit; }
 .pill-head button { background: rgba(255, 255, 255, 0.1); border: 0; border-radius: 999px; color: var(--text); cursor: pointer; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 6px; margin-left: 4px; }
 .pill-head button:hover { color: var(--text); }
 
-.matchup { font-size: 13px; font-weight: 700; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.matchup { font-size: 13px; font-weight: 700; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; overflow: hidden; }
+.matchup .r, .matchup .b { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .matchup .vs { color: var(--dim); font-weight: 400; font-size: 11px; }
 .matchup .r { color: var(--win); }
 .matchup .b { color: var(--hold); }
@@ -109,6 +110,7 @@ button, select { font: inherit; color: inherit; }
 .track { position: relative; height: 7px; background: rgba(255, 255, 255, 0.1); border-radius: 4px; }
 .track .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--hold); }
 .track .fill.w { background: var(--win); }
+.track .fill.now { background: rgba(255, 255, 255, 0.55); }
 .track .thr { position: absolute; top: -2px; bottom: -2px; width: 1.5px; background: var(--accent); }
 .track .live { position: absolute; top: -3px; width: 2px; height: 13px; background: #fff; border-radius: 1px; }
 .barrow .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); }
@@ -143,12 +145,12 @@ button, select { font: inherit; color: inherit; }
   #controls { left: 8px; right: auto; transform: none; bottom: 46px; }
   .replay-label { left: 8px; right: auto; bottom: 84px; max-width: calc(100vw - 16px); }
 }
-@media (max-width: 1200px) { .hint { display: none; } }
+@media (max-width: 1400px) { .hint { display: none; } }
 .duel-grid .oneliner { font-size: 12px; line-height: 1.28; }
 
 /* ---------- broadcast background ---------- */
-.video { position: fixed; inset: 0; z-index: 1; background: #000; }
-.video iframe { width: 100%; height: 100%; border: 0; display: block; pointer-events: none; }
+.video { position: fixed; left: 0; right: 0; bottom: 0; top: 0; z-index: 1; background: #000; overflow: hidden; }
+.video iframe { position: absolute; border: 0; display: block; pointer-events: none; }
 body.broadcast canvas#field { visibility: hidden; }
 body.broadcast #btnPrev, body.broadcast #btnPlay, body.broadcast #btnNext, body.broadcast #tClock, body.broadcast .hint { display: none; }
 #scorebug, #controls { z-index: 20; }
