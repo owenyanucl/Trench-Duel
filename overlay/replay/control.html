@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Replay controller</title>
+<link rel="stylesheet" href="replay.css">
+<link rel="stylesheet" href="control.css">
+</head>
+<body>
+<header class="top">
+  <b>Replay controller</b>
+  <span class="dim">Private. Viewers see only what you publish, at <a id="outputUrl" href="/replay/output" target="_blank" rel="noopener">/replay/output</a>.</span>
+</header>
+<main class="ctl">
+  <section class="panel private">
+    <h2>Private preview <span class="tag">only you see this</span></h2>
+    <label class="row">Play
+      <select id="play"></select>
+    </label>
+    <p id="playDesc" class="desc"></p>
+    <div id="preview" class="preview"></div>
+    <div class="row transport">
+      <button id="pPlay" type="button">Play</button>
+      <span class="seg" id="speed"><button type="button" data-speed="0.5">0.5x</button><button type="button" data-speed="1" class="on">1x</button></span>
+      <input id="scrub" type="range" min="1" max="1" step="1" value="1" aria-label="Frame">
+      <span id="frameLabel" class="mono"></span>
+    </div>
+    <div class="row jumps">
+      <span class="dim">Jump to</span>
+      <button type="button" data-jump="snap">Snap</button>
+      <button type="button" data-jump="release">Release</button>
+      <button type="button" data-jump="sack">Sack</button>
+      <button type="button" data-jump="last">End of tracking</button>
+    </div>
+    <div class="row">
+      <label>Player
+        <select id="player"></select>
+      </label>
+      <span class="dim">or click a dot on the field</span>
+    </div>
+    <div class="row layers">
+      <label><input type="checkbox" data-layer="trails"> Trails</label>
+      <label><input type="checkbox" data-layer="receiverSpacing"> Receiver spacing</label>
+      <label><input type="checkbox" data-layer="qbRusher"> QB to nearest rusher</label>
+      <label><input type="checkbox" data-layer="context"> Recorded context</label>
+    </div>
+    <p id="hint" class="hint"></p>
+    <p id="readout" class="readout mono"></p>
+  </section>
+
+  <section class="panel stream">
+    <h2>On stream <span id="live" class="live">OFF AIR</span></h2>
+    <div class="row buttons">
+      <button id="publish" type="button" class="primary">Publish draft</button>
+      <button id="sPlay" type="button">Play on stream</button>
+      <button id="sPause" type="button">Pause on stream</button>
+      <button id="hide" type="button" class="danger">Hide</button>
+    </div>
+    <p id="streamStatus" class="status"></p>
+    <p id="diff" class="diff"></p>
+    <div class="mirror-label dim">What viewers see now</div>
+    <div id="mirror" class="mirror"></div>
+    <p class="dim small">Publish copies the whole draft and starts it paused. Play, Pause and Hide act only on what is published; the draft above is never sent until you publish again.</p>
+  </section>
+</main>
+<script src="replay.js"></script>
+<script src="control.js"></script>
+</body>
+</html>

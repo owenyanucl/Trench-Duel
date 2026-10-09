@@ -1,0 +1,59 @@
+{
+  "games": 122,
+  "plays": 8557,
+  "players": 1679,
+  "scouting_rows": 188254,
+  "sample_games": [
+    2021090900,
+    2021103106
+  ],
+  "tracking_rows": 175007,
+  "sample_plays": 181,
+  "sample_frames": 7609,
+  "has_snap": 181,
+  "has_release": 170,
+  "frames_after_release_distribution": {
+    "3": 4,
+    "4": 50,
+    "5": 116
+  },
+  "catch_events": 1,
+  "tackle_events": 0,
+  "sample_completions": 101,
+  "sample_outcomes": {
+    "C": 101,
+    "I": 65,
+    "S": 6,
+    "IN": 5,
+    "R": 4
+  },
+  "pff_hit_plays": 793,
+  "pff_hurry_plays": 2323,
+  "pff_sack_plays": 536,
+  "pff_beaten_plays": 1696,
+  "git_blob_sha1": {
+    "games.csv": "bc0759203ed0ee7a9aa7e17ea3aa03b4bc294c0b",
+    "pffScoutingData.csv": "eabd6fe68a15d370aebddfc4dc1d0431ce407411",
+    "players.csv": "92a75a6b158db0062a25bdf2939f32462e25b72f",
+    "plays.csv": "969c38623939070609310bdd7d3900eda767f880",
+    "tracking_2021090900.csv": "4cb4a6b72fd8c84a0c9ede6e42c0c50a4a404851",
+    "tracking_2021103106.csv": "01380bd1262018f322ae87024a7f4910819f2776"
+  },
+  "timing_note": "CSV timestamps are rounded to seconds. Elapsed seconds use frame differences divided by the NFL tracking rate of 10 Hz; do not subtract the exported time strings for subsecond metrics.",
+  "checks": [
+    "Unique game, play, player and scouting join keys",
+    "Scouting: 22 players per play",
+    "All sample player rows join to names and roles",
+    "Every sampled frame has 22 players plus ball",
+    "No duplicate sampled entities",
+    "Elapsed times calculated consistently from 10 Hz frames"
+  ],
+  "additional_checks": [
+    "All exported nearest-defender distances reconciled with a separate math.hypot calculation",
+    "Gronkowski 3.3s release and Wentz 3.6s sack confirmed from frames",
+    "Sack time-to-throw is null",
+    "Gronkowski target line x=57 verified",
+    "Left-going play 2021090900/137 has line x=108, target x=98, release 2.5 seconds",
+    "Selected demo plays are not nullified"
+  ]
+}

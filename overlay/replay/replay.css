@@ -1,0 +1,78 @@
+:root {
+  --off: #4fc3ff;
+  --def: #ff6a3d;
+  --los: #3b7bff;
+  --target: #ff9f1c;
+  --text: #f4f6fa;
+  --dim: #a9b1c2;
+  --card: #0d1520;
+  --line: rgba(255, 255, 255, 0.14);
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* ---------- the card: fixed design size, scaled to its host ---------- */
+.rp-host { position: relative; overflow: hidden; }
+.rp-card { position: absolute; left: 0; top: 0; width: 1200px; height: 640px; transform-origin: 0 0; background: var(--card); color: var(--text); font: 15px/1.35 var(--font); border-radius: 18px; overflow: hidden; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45); display: flex; flex-direction: column; }
+.rp-card[hidden] { display: none; }
+.rp-head { height: 54px; flex: none; display: flex; align-items: center; gap: 22px; padding: 0 22px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.rp-head small { color: var(--dim); font-size: 11px; margin-left: 4px; }
+.rp-dd { font-size: 22px; font-weight: 800; letter-spacing: 0.02em; }
+.rp-teams { margin-left: auto; color: var(--dim); display: flex; align-items: center; gap: 6px; }
+.sw { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-left: 8px; }
+.sw.off { background: var(--off); }
+.sw.def { background: var(--def); }
+.rp-body { flex: 1; display: flex; min-height: 0; }
+.rp-field { width: 820px; flex: none; background: #12391f; }
+.rp-svg { width: 100%; height: 100%; display: block; }
+.rp-side { width: 380px; flex: none; padding: 14px 18px; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px; border-left: 1px solid var(--line); overflow: hidden; }
+.rp-kicker { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); margin-bottom: 4px; }
+.rp-who { font-size: 18px; font-weight: 700; }
+.rp-big { font-size: 46px; font-weight: 800; line-height: 1.05; font-variant-numeric: tabular-nums; margin: 2px 0 2px; }
+.rp-big small { font-size: 20px; font-weight: 600; color: var(--dim); }
+.rp-big .na, .na { font-size: 22px; color: var(--dim); font-weight: 600; }
+.rp-line { font-size: 16px; margin-bottom: 6px; }
+.rp-note { font-size: 11px; color: var(--dim); margin-top: 4px; }
+.rp-context { border-top: 1px solid var(--line); padding-top: 10px; font-size: 14px; display: flex; flex-direction: column; gap: 3px; }
+.rp-foot { height: 46px; flex: none; display: flex; align-items: center; gap: 22px; padding: 0 22px; border-top: 1px solid var(--line); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rp-clock { font-weight: 700; min-width: 150px; }
+.rp-badges { display: flex; gap: 8px; }
+.rp-badges b { background: rgba(255, 255, 255, 0.12); border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+.rp-src { margin-left: auto; color: var(--dim); font-size: 12px; }
+
+/* field */
+.f-grass { fill: #1b5130; }
+.f-endzone { fill: #143f25; }
+.f-yard { stroke: rgba(255, 255, 255, 0.35); stroke-width: 1.5; }
+.f-goal { stroke: rgba(255, 255, 255, 0.75); stroke-width: 3; }
+.f-hash { stroke: rgba(255, 255, 255, 0.3); stroke-width: 1.2; }
+.f-num { fill: rgba(255, 255, 255, 0.35); font: 700 26px var(--font); text-anchor: middle; dominant-baseline: middle; }
+.f-los { stroke: var(--los); stroke-width: 4; }
+.f-target { stroke: var(--target); stroke-width: 4; }
+.f-linetag { font: 700 13px var(--font); text-anchor: middle; paint-order: stroke; stroke: rgba(0, 0, 0, 0.7); stroke-width: 3px; }
+.f-los-tag { fill: #9fbcff; }
+.f-target-tag { fill: #ffc77a; }
+.f-attack { fill: rgba(255, 255, 255, 0.55); font: 700 16px var(--font); dominant-baseline: middle; }
+.f-pl circle { stroke: rgba(0, 0, 0, 0.55); stroke-width: 1.5; }
+.f-pl.off circle { fill: var(--off); }
+.f-pl.def circle { fill: var(--def); }
+.f-pl.hl circle { stroke: #fff; stroke-width: 3.5; }
+.f-pl.sel circle { stroke: #fff; stroke-width: 5; }
+.f-pl.click { cursor: pointer; }
+.f-pl.click:hover circle { stroke: #fff; stroke-width: 3; }
+.f-jersey { fill: #0b1420; font: 700 9.5px var(--font); text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.f-ball { fill: #8a4b20; stroke: #fff; stroke-width: 1.6; }
+.f-name { fill: #fff; font: 700 15px var(--font); text-anchor: middle; paint-order: stroke; stroke: rgba(0, 0, 0, 0.85); stroke-width: 4px; pointer-events: none; }
+.f-dist { fill: #fff; font: 800 15px var(--font); paint-order: stroke; stroke: rgba(0, 0, 0, 0.85); stroke-width: 4px; dominant-baseline: middle; pointer-events: none; }
+.f-trail { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; opacity: 0.85; }
+.f-trail.off { stroke: #bfe8ff; }
+.f-trail.def { stroke: #ffc0a8; }
+.f-link { stroke: #fff; stroke-width: 2.5; stroke-dasharray: 6 5; }
+
+/* chart */
+.rp-chart { display: block; margin-top: 4px; }
+.c-axis { stroke: rgba(255, 255, 255, 0.3); stroke-width: 1; }
+.c-mark { stroke: rgba(255, 255, 255, 0.25); stroke-width: 1; stroke-dasharray: 3 3; }
+.c-lab { fill: var(--dim); font: 11px var(--font); }
+.c-line { fill: none; stroke: var(--off); stroke-width: 2.5; stroke-linejoin: round; }
+.c-cursor { stroke: #fff; stroke-width: 1.5; }
+.c-dot { fill: #fff; }
