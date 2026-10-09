@@ -48,6 +48,19 @@ In the overlay, `Tab` shows or hides the bar, `H` or `Esc` hides everything, and
 
 The game plays back as a simulated live feed, labelled "SIMULATED LIVE · 2021 DATA · CLE @ MIN Wk 4". Each play runs pre-snap, live, then after-play: the bar shows the situation, the offense's look and the defense's blitz tendency before the snap. Tracking data reaches the overlay about 2 seconds after it happens, as a real feed would, so the controller shows each Duel result as soon as the data could know it: when the ball is thrown or the 3-second window closes, plus that latency, even mid-play. The PFF-based results (ball-out time, rushers vs blockers, the PFF-charted pressure story) arrive about 2 seconds after the play. Viewers see only what the streamer pushes: Push is disabled during live action, and a pushed card clears at the snap. The Duel season line and the Team pill use weeks 1–3 only, the games before this Week 4 game. Opening `http://localhost:8000/#play=67&phase=after&duel=1&pressure=1` shows the moment in the screenshot; `#play=67&frame=10&duel=1` shows the same play while live, with the tally at 5 of 21 and this rep pending because the data can't know it yet; `#play=75&phase=after&duel=1` shows the final tally, 6 of 29; `#bg=video&duel=1&pressure=1` opens the Broadcast clip of play 38 before the snap, and pressing `N` (or "Next phase") twice reveals the after-play result once the sack has played.
 
+## Replay controller
+
+A second tool for explaining a single play in depth: the streamer prepares a replay privately (pick a play and player, scrub, toggle trails, receiver-to-nearest-defender distance with a chart, QB-to-nearest-rusher distance, recorded context), then publishes it to a separate audience page and plays, pauses or hides it on stream. It runs on a small local server so the audience page works in any browser window or capture tool.
+
+```bash
+python3 server.py --port 8000
+```
+
+- Controller: `http://localhost:8000/replay/control`
+- Audience output: `http://localhost:8000/replay/output`
+
+Details, checks and limitations: [docs/replay-controller.md](docs/replay-controller.md).
+
 ## What is in the box
 
 | File | What it is |
