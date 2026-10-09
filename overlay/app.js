@@ -2,6 +2,9 @@
   'use strict';
   var T = window.TRENCH;
   if (!T) { document.getElementById('fatal').hidden = false; return; }
+  // The streamer's controller (index.html) drives; the viewer page (viewer.html, what OBS captures) only follows
+  // and shows the game view plus the Duel card the controller pushed.
+  var VIEWER = window.TRENCH_MODE === 'viewer';
 
   var FPS = 10, LATENCY_MS = 2000, AFTER_HOLD_MS = 4000, PILL_STALE_MS = 10000;
   var TEAM = {
@@ -22,7 +25,7 @@
     playId: 2349,
     src: 'https://www.youtube-nocookie.com/embed/e7VpmQzDL4k?autoplay=1&mute=1&controls=0&playsinline=1&loop=1&playlist=e7VpmQzDL4k&cc_load_policy=0&rel=0&modestbranding=1&end=22',
     tag: 'BROADCAST CLIP',
-    label: 'Cleveland Browns YouTube · CLE @ MIN 2021 Wk 4, play shown: Q3 11:29 McKinley sack',
+    label: 'Cleveland Browns YouTube · CLE @ MIN 2021 Wk 4, play shown: Q3 11:29, 3rd & 3',
     fileNotice: 'Broadcast mode needs a local server: <code>python3 -m http.server 8000 -d overlay</code>, then open <code>http://localhost:8000</code>'
   };
   var RESULT = { C: 'Complete', I: 'Incomplete', S: 'Sack', IN: 'Interception', R: 'Scramble' };
@@ -77,6 +80,8 @@
   // a to-date figure is either {n, of} or a rate
   function rateOf(x) { return typeof x === 'number' ? x : x && x.of ? x.n / x.of : null; }
   function countOf(x) { return x && typeof x === 'object' && x.of != null ? cnt(x.n, x.of) : ''; }
+  function num(n) { return Number(n).toLocaleString('en-US'); }
+  function lgCount(x, sep) { return x && typeof x === 'object' && x.of ? ' (' + num(x.n) + (sep || '/') + num(x.of) + ')' : ''; }
   function arrow(v, lv) { return v == null || lv == null || Math.round(v * 100) === Math.round(lv * 100) ? '' : v > lv ? '<i class="mk up">▲</i>' : '<i class="mk down">▼</i>'; }
   function times(rate, exp) { return exp > 0 ? (rate / exp).toFixed(1) + '×' : '—'; }
 
@@ -96,7 +101,7 @@
 
   // ---------- state ----------
   var S = {
-    i: 0, frame: 0, playing: true, last: 0, endAt: 0, afterAt: 0, after: false, openedAt: {},
+    i: 0, frame: 0, playing: !VIEWER, last: 0, endAt: 0, afterAt: 0, after: false, openedAt: {}, pushed: null, clearedAt: 0,
     overlay: true, pills: { duel: false, pressure: false, team: false },
     selected: null, pair: null, team: null, bg: 'replay'
   };
@@ -124,7 +129,21 @@
     return S.frame < p.snapFrame ? 'pre' : 'live';
   }
   // Spoiler-safe: earlier plays always count; the play on screen counts only in AFTER-PLAY.
-  function scored(k) { return k < S.i || (k === S.i && S.after); }
+  // The tracking-based duel result is known DATA_LATENCY frames after the rule's window closes (the throw, the end of
+  // tracking, or windowSec after the snap). Wall time spent at the last frame while playing counts as frames.
+  var DATA_LATENCY_FRAMES = LATENCY_MS / 1000 * FPS;
+  function readyFrame(p) { return Math.min(p.endFrame, p.snapFrame + league.windowSec * FPS) + DATA_LATENCY_FRAMES; }
+  function effFrame() {
+    var p = plays[S.i], last = lastFrame(p);
+    if (S.frame < last || !S.playing || !S.endAt) return S.frame;
+    return last + (performance.now() - S.endAt) * FPS / 1000;
+  }
+  function duelReady() {
+    if (VIEWER && S.remoteReady != null) return S.remoteReady;
+    return S.after || effFrame() >= readyFrame(plays[S.i]);
+  }
+  // Spoiler-safe: earlier plays always count; the play on screen counts once its tracking result is ready.
+  function scored(k) { return k < S.i || (k === S.i && duelReady()); }
   function pairTally(r, b) {
     var reps = 0, wins = 0, seq = [];
     for (var k = 0; k <= S.i; k++) {
@@ -182,7 +201,7 @@
     cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
     if (S.overlay && $('bar').offsetHeight) barH = $('bar').offsetHeight;
     // reserve a band for the bar and one row of pills so an open pill never covers the field
-    var padX = 16, top = innerWidth <= 760 ? 96 : 10 + barH + 6 + PILL_MAX + 8, bottom = innerWidth <= 760 ? 124 : 52;
+    var padX = 16, top = VIEWER ? 16 : innerWidth <= 760 ? 96 : 10 + barH + 6 + PILL_MAX + 8, bottom = innerWidth <= 760 ? 124 : 52;
     var s = Math.min((innerWidth - 2 * padX) / 120, (innerHeight - top - bottom) / 53.3);
     view.s = s;
     view.ox = (innerWidth - 120 * s) / 2;
@@ -370,7 +389,7 @@
   }
   function renderPicker() {
     picker.innerHTML = '';
-    var auto = el('option', null, 'Pick a player…'); auto.value = ''; picker.appendChild(auto);
+    var auto = el('option', null, 'Player…'); auto.value = ''; picker.appendChild(auto);
     teams.filter(function (t) { return !teamFocus() || teamFocus() === t; }).forEach(function (t) {
       var ids = Object.keys(duelPlayers).filter(function (id) { return P(id).team === t; });
       var rush = ids.filter(isRusher), block = ids.filter(function (id) { return !isRusher(id); });
@@ -410,13 +429,24 @@
   $('btnHide').addEventListener('click', function () { if (S.overlay) hideAll(); else showOverlay(); });
 
   // ---------- overlay: pills ----------
+  function duelLine(r, b, t) {
+    var rL = esc(lastName(r)), bL = esc(lastName(b)), exp = expectedOf(r);
+    var avg = exp ? '; ' + ALIGN_PLURAL[alignOf(r)] + ' averaged 1 in ' + oneIn(exp) + ' before tonight' : '';
+    var reps = t.reps + ' rep' + (t.reps > 1 ? 's' : '');
+    if (t.reps === 0) return rL + ' and ' + bL + ' have not met yet tonight.';
+    if (t.wins === 0) return bL + ' has stonewalled ' + rL + (t.reps === 1 ? ' on their only rep' : ' on all ' + reps) + ' tonight' + avg + '.';
+    return rL + ' has beaten ' + bL + ' on ' + t.wins + ' of ' + reps + ' tonight' + avg + '.';
+  }
+  function isPushed(r, b) { return !!S.pushed && S.pushed.rusherId == r && S.pushed.blockerId == b; }
   function renderDuel() {
     var box = $('pill-duel');
     var d = currentDuel();
     var head = '<div class="pill-head"><span>Trench duel · <span class="tag">' +
       (d.mode === 'pinned' ? 'your pick' : d.mode === 'pair' || d.mode === 'headline' ? 'suggested matchup' : 'most-met pair this play') + '</span></span>' +
-      '<span>spoiler-safe · win = within ' + league.thresholdYds + ' yd of QB in ' + league.windowSec + 's' +
-      (S.selected != null || S.pair ? ' <button data-act="auto">Clear ✕</button>' : '') + '</span></div>';
+      '<span>win = ≤' + league.thresholdYds + ' yd in ' + league.windowSec + 's' +
+      (S.selected != null || S.pair ? ' <button data-act="auto">Clear ✕</button>' : '') +
+      (d.rusherId != null ? ' <button id="pushDuel" class="push-btn' + (isPushed(d.rusherId, d.blockerId) ? ' on' : '') + '" data-act="push"' + (phase() === 'live' ? ' disabled title="Available after the play"' : '') + '>' + (isPushed(d.rusherId, d.blockerId) ? 'On air · Pull' : 'Push to stream') + '</button>' : '') +
+      '</span></div>';
     if (d.rusherId == null) {
       var who = d.only != null ? esc(tagName(d.only)) + ' has no trench reps yet tonight.' : 'No pass-rush duels on this play.';
       box.innerHTML = head + '<div class="muted">' + who + '</div>';
@@ -425,12 +455,7 @@
     var r = d.rusherId, b = d.blockerId, t = pairTally(r, b);
     var rL = esc(lastName(r)), bL = esc(lastName(b));
     var rAlign = alignOf(r), exp = expectedOf(r);
-    var avg = exp ? '; ' + ALIGN_PLURAL[rAlign] + ' averaged 1 in ' + oneIn(exp) + ' before tonight' : '';
-    var reps = t.reps + ' rep' + (t.reps > 1 ? 's' : '');
-    var line;
-    if (t.reps === 0) line = rL + ' and ' + bL + ' have not met yet tonight.';
-    else if (t.wins === 0) line = bL + ' has stonewalled ' + rL + (t.reps === 1 ? ' on their only rep' : ' on all ' + reps) + ' tonight' + avg + '.';
-    else line = rL + ' has beaten ' + bL + ' on ' + t.wins + ' of ' + reps + ' tonight' + avg + '.';
+    var line = duelLine(r, b, t);
     var thisRep = !d.onPlay ? '<span>not matched</span>'
       : !scored(S.i) ? '<b class="pending">pending</b>'
       : d.onPlay.rusherWon ? '<b class="r">rusher won</b>' : '<b class="b">blocker held</b>';
@@ -462,26 +487,33 @@
     var e = ev[0], secs = e.seconds != null ? e.seconds.toFixed(1) + ' s' : '';
     var full = P(e.rusherId).name || ('#' + e.jersey), last = e.rusherId != null ? lastName(e.rusherId) : full;
     var jersey = '#' + (e.jersey != null ? e.jersey : P(e.rusherId).jersey);
+    // sacks are timed to the sack; hits and hurries to when the ball came out
+    var when = !secs ? '' : e.type === 'sack' ? ' in ' + secs : ' · ball out at ' + secs;
     var text = e.blockerId != null || e.blockerPos
-      ? jersey + ' ' + full + ' beat the ' + (e.blockerPos || shortName(e.blockerId)) + ' — ' + e.type + (secs ? ' in ' + secs : '')
-      : e.type === 'sack' && secs
-        ? jersey + ' ' + last + ' sack — QB held it ' + secs + ', no blocker charged'
-        : jersey + ' ' + last + ' ' + e.type + (secs ? ' at ' + secs : '') + ' — no blocker charged';
+      ? jersey + ' ' + full + ' beat the ' + (e.blockerPos || shortName(e.blockerId)) + ' — ' + e.type + when
+      : e.chargedElsewhere
+        ? jersey + ' ' + full + ' ' + e.type + when
+        : e.type === 'sack' && secs
+          ? jersey + ' ' + last + ' sack — QB held it ' + secs + ', no blocker charged'
+          : jersey + ' ' + last + ' ' + e.type + when + ' — no blocker charged';
     return { e: e, text: text, more: ev.length - 1, short: jersey + ' ' + e.type + (secs ? ' · ' + secs : ''),
       big: e.type === 'sack' || e.type === 'hit' };
   }
   function renderPressure() {
     var box = $('pill-pressure'), play = plays[S.i];
-    if (phase() !== 'after') {
+    var after = phase() === 'after';
+    if (!after && !duelReady()) {
       box.innerHTML = '<div class="pill-head"><span>Pressure · this play</span><span>PFF-charted</span></div>' +
-        '<div class="muted">Live play: result in ~2 s after the whistle.</div>';
+        '<div class="muted">' + (phase() === 'pre' ? 'Result ~2 s after the play.' : 'Live play: result in ~2 s after the whistle.') + '</div>';
       return;
     }
-    var st = pressureStory(play);
+    var st = after ? pressureStory(play) : null;
     var head = '<div class="pill-head"><span>Pressure · this play</span><span>PFF-charted</span></div>';
-    var story = st
-      ? '<div class="pr-top">' + esc(st.text) + (st.more ? ' <span class="pr-sub">+' + st.more + ' more</span>' : '') + '</div>'
-      : '<div class="pr-top">No charted pressure' + (play.timeToThrow != null ? ' — ball out in ' + play.timeToThrow.toFixed(1) + ' s' : '') + '</div>';
+    var story = !after
+      ? '<div class="pr-top">Charted pressure after the play</div>'
+      : st
+        ? '<div class="pr-top">' + esc(st.text) + (st.more ? ' <span class="pr-sub">+' + st.more + ' more</span>' : '') + '</div>'
+        : '<div class="pr-top">No charted pressure' + (play.timeToThrow != null ? ' — ball out in ' + play.timeToThrow.toFixed(1) + ' s' : '') + '</div>';
     if (!play.duels.length) { box.innerHTML = head + story; return; }
     // tracking-based closest-rusher bars, one row per rusher (double teams collapse)
     var rows = {}, order = [];
@@ -492,12 +524,12 @@
     order.sort(function (a, b) { return rows[a].d.closestYds - rows[b].d.closestYds; });
     var top = rows[order[0]].d;
     var tp = top.secToPressure != null
-      ? 'within ' + league.thresholdYds + ' yd at <b>' + top.secToPressure.toFixed(1) + 's</b>'
-      : 'not within ' + league.thresholdYds + ' yd inside ' + league.windowSec + 's';
+      ? '≤' + league.thresholdYds + ' yd at <b>' + top.secToPressure.toFixed(1) + 's</b>'
+      : 'never ≤' + league.thresholdYds + ' yd';
     var MAX = 10, sel = currentDuel();
     var bars = order.map(function (id) {
       var x = rows[id], d = x.d, w = Math.max(4, (1 - Math.min(d.closestYds, MAX) / MAX) * 100);
-      var dbl = x.b.length > 1 ? ' ×2' : '';
+      var dbl = x.b.length > 1 ? ' ×' + x.b.length : '';
       return '<div class="barrow' + (sel.rusherId == id ? ' sel' : '') + '" data-id="' + id + '" title="vs ' + esc(x.b.map(shortName).join(' + ')) + '">' +
         '<span class="nm">' + esc(lastName(id)) + dbl + '</span>' +
         '<span class="track"><span class="fill' + (d.rusherWon ? ' w' : '') + '" style="width:' + w + '%"></span>' +
@@ -505,7 +537,7 @@
         '<span class="v">' + d.closestYds.toFixed(1) + '</span></div>';
     }).join('');
     box.innerHTML = head + story +
-      '<div class="pr-sub">Tracking: closest <b>' + esc(tagName(top.rusherId)) + '</b> ' + top.closestYds.toFixed(1) + ' yd in first ' + league.windowSec + 's or to the throw · ' + tp + '</div>' +
+      '<div class="pr-sub" title="Tracking: closest approach to the QB in the first ' + league.windowSec + ' s or until the throw">Tracking: <b>' + esc(lastName(top.rusherId)) + '</b> closest, ' + top.closestYds.toFixed(1) + ' yd · ' + tp + '</div>' +
       '<div class="bars" title="Bar = how close each rusher got to the QB in the first ' + league.windowSec + 's or until the throw/sack (longer = closer)">' + bars + '</div>';
     box.querySelectorAll('.barrow').forEach(function (row) {
       row.onclick = function () { S.selected = +row.getAttribute('data-id'); renderPicker(); renderOverlay(); draw(); };
@@ -546,7 +578,8 @@
     var set = function (k, v) { slots.querySelector('.slot-' + k + ' .slot-v').textContent = v; };
     set('sit', ordinal(p.down) + ' & ' + p.yardsToGo + ' · Q' + p.quarter + ' ' + p.clock + ' · ' + p.offense + ' ball');
     if (ph === 'after') {
-      set('off', p.timeToThrow != null ? 'Ball out ' + p.timeToThrow.toFixed(1) + ' s' : 'No throw');
+      var med = TEAMS[p.offense] && TEAMS[p.offense].offense && TEAMS[p.offense].offense.timeToThrowMedian;
+      set('off', p.timeToThrow != null ? 'Ball out ' + p.timeToThrow.toFixed(1) + ' s' + (typeof med === 'number' ? ' · med ' + med.toFixed(2) : '') : 'No throw');
       set('def', p.rushers != null ? p.rushers + ' rushed / ' + (p.blockers != null ? p.blockers : '—') + ' blocked' : '—');
     } else {
       // pre-snap look; unchanged through LIVE
@@ -576,21 +609,21 @@
       var gap = Math.abs(v / lv - 1);
       if (gap > best) { best = gap; pick = k; }
     });
-    if (pick) line = TEAM_LINES[pick](name, pct(rateOf(tget(data, pick))), countOf(tget(data, pick)), pct(rateOf(tget(LG_TEAM, pick))));
+    if (pick) line = TEAM_LINES[pick](name, pct(rateOf(tget(data, pick))), countOf(tget(data, pick)), pct(rateOf(tget(LG_TEAM, pick))) + lgCount(tget(LG_TEAM, pick), ' of '));
     var B = tget(data, 'blitz'), Pr = tget(data, 'pressure'), lb = rateOf(tget(LG_TEAM, 'blitz')), lp = rateOf(tget(LG_TEAM, 'pressure'));
     if (rateOf(B) != null && rateOf(Pr) != null && lb && lp) {
       var bg = rateOf(B) / lb - 1, pg = rateOf(Pr) / lp - 1;
       if (bg * pg < 0 && Math.abs(bg) + Math.abs(pg) > best) {
         line = bg < 0
-          ? name + ' blitzes less than average (' + pct(rateOf(B)) + ' ' + countOf(B) + ' vs ' + pct(lb) + ') but still pressures on ' + pct(rateOf(Pr)) + ' of dropbacks ' + countOf(Pr) + '.'
-          : name + ' blitzes more than average (' + pct(rateOf(B)) + ' ' + countOf(B) + ' vs ' + pct(lb) + ') but pressures on only ' + pct(rateOf(Pr)) + ' of dropbacks ' + countOf(Pr) + '.';
+          ? name + ' blitzes less than average (' + pct(rateOf(B)) + ' ' + countOf(B) + ' vs ' + pct(lb) + lgCount(tget(LG_TEAM, 'blitz'), ' of ') + ') but still pressures on ' + pct(rateOf(Pr)) + ' of dropbacks ' + countOf(Pr) + '.'
+          : name + ' blitzes more than average (' + pct(rateOf(B)) + ' ' + countOf(B) + ' vs ' + pct(lb) + lgCount(tget(LG_TEAM, 'blitz'), ' of ') + ') but pressures on only ' + pct(rateOf(Pr)) + ' of dropbacks ' + countOf(Pr) + '.';
       }
     }
     function stat(label, short, k) {
       var x = tget(data, k), v = rateOf(x), lv = rateOf(tget(LG_TEAM, k));
       if (v == null) return '';
-      return '<div class="st" title="' + esc(label) + ': ' + pct(v) + (x && x.of ? ' (' + x.n + ' of ' + x.of + ')' : '') + (lv != null ? ', league ' + pct(lv) : '') + '"><span class="sl">' + short + '</span><b class="sv">' + pct(v) + '</b>' +
-        (x && x.of ? '<span class="ct">' + x.n + '/' + x.of + '</span>' : '') + arrow(v, lv) + (lv != null ? '<span class="lg">lg ' + pct(lv) + '</span>' : '') + '</div>';
+      return '<div class="st" title="' + esc(label) + ': ' + pct(v) + (x && x.of ? ' (' + x.n + ' of ' + x.of + ')' : '') + (lv != null ? ', league ' + pct(lv) + lgCount(tget(LG_TEAM, k), ' of ') : '') + '"><span class="sl">' + short + '</span><b class="sv">' + pct(v) + '</b>' +
+        (x && x.of ? '<span class="ct">' + x.n + '/' + x.of + '</span>' : '') + arrow(v, lv) + (lv != null ? '<span class="lg" title="League ' + pct(lv) + lgCount(tget(LG_TEAM, k), ' of ') + '">lg ' + pct(lv) + '</span>' : '') + '</div>';
     }
     var covs = tget(data, 'coverages') || [];
     // coverages share one denominator, so it is shown once: "Cov. of 93: Quarters 37% (34) · …"
@@ -610,10 +643,57 @@
       (cov ? '<div class="cov"><span class="sl">' + covLabel + '</span> ' + cov + '</div>' : '');
   }
   $('pill-duel').addEventListener('click', function (e) {
-    if (e.target.getAttribute('data-act') === 'auto') { S.selected = null; S.pair = null; renderPicker(); renderOverlay(); draw(); }
+    var act = e.target.getAttribute('data-act');
+    if (act === 'auto') { S.selected = null; S.pair = null; renderPicker(); renderOverlay(); draw(); }
+    if (act === 'push') {
+      var d = currentDuel();
+      S.pushed = isPushed(d.rusherId, d.blockerId) ? null : { kind: 'duel', rusherId: d.rusherId, blockerId: d.blockerId };
+      S.clearedAt = 0; renderOverlay();
+    }
   });
 
+  // ---------- stream: controller -> viewer ----------
+  var chan = null;
+  try { chan = new BroadcastChannel('trench-duel'); } catch (err) { chan = null; }
+  function postState() {
+    if (VIEWER || !chan) return;
+    chan.postMessage({ type: 'state', play: S.i + 1, frame: S.frame, phase: phase(), ready: duelReady(), playing: S.playing, bg: S.bg, pushed: S.pushed });
+  }
+  var onAir = el('span', 'on-air'); onAir.id = 'onAir'; onAir.hidden = true;
+  $('bar').insertBefore(onAir, $('bar').querySelector('.slots') || $('bar').querySelector('.icon-btn[data-pill]'));
+  var CLEARED_NOTE_MS = 2500;
+  function renderOnAir() {
+    if (S.pushed) { onAir.textContent = 'ON AIR: ' + lastName(S.pushed.rusherId) + ' vs ' + lastName(S.pushed.blockerId); onAir.hidden = false; onAir.classList.remove('cleared'); }
+    else if (S.clearedAt && performance.now() - S.clearedAt < CLEARED_NOTE_MS) { onAir.textContent = 'Cleared at snap'; onAir.hidden = false; onAir.classList.add('cleared'); }
+    else { onAir.hidden = true; onAir.classList.remove('cleared'); }
+  }
+  // viewer: the pushed Duel card, with the same spoiler-safe tally as the controller
+  function renderViewerCard() {
+    var card = $('viewerCard');
+    if (!card) return;
+    if (!S.pushed) { card.style.display = 'none'; card.innerHTML = ''; return; }
+    var r = S.pushed.rusherId, b = S.pushed.blockerId, t = pairTally(r, b);
+    card.innerHTML =
+      '<div class="vc-head"><span class="vc-r">' + esc(tagName(r)) + '</span><span class="vc-vs">vs</span><span class="vc-b">' + esc(tagName(b)) + '</span></div>' +
+      '<div class="vc-tally"><span class="vc-n">' + t.wins + '</span> – <span class="vc-n">' + (t.reps - t.wins) + '</span> <span class="vc-reps">' + t.reps + ' rep' + (t.reps === 1 ? '' : 's') + '</span></div>' +
+      '<div class="vc-line">' + duelLine(r, b, t) + '</div>' +
+      '<div class="vc-dots">' + t.seq.map(function (x) { return '<i class="dot ' + (x.w ? 'win' : 'hold') + '"></i>'; }).join('') + '</div>' +
+      '<div class="vc-src">Tracking: within ' + league.thresholdYds + ' yd of the QB inside ' + league.windowSec + ' s · ' + BEFORE + ' context</div>';
+    card.style.display = '';
+  }
+  function applyRemote(m) {
+    if (!m || m.type !== 'state') return;
+    if (m.bg && m.bg !== S.bg) setBg(m.bg);
+    var idx = Math.max(0, Math.min(plays.length - 1, (m.play || 1) - 1));
+    if (idx !== S.i) gotoPlay(idx);
+    S.frame = Math.max(0, Math.min(lastFrame(plays[S.i]), +m.frame || 0));
+    S.after = m.phase === 'after'; S.playing = false; S.remoteReady = m.ready != null ? !!m.ready : null;
+    S.pushed = m.pushed || null;
+    renderOverlay(); renderTick(); draw();
+  }
+
   function renderOverlay() {
+    if (VIEWER) { renderChrome(); renderViewerCard(); return; }
     overlay.classList.toggle('hidden', !S.overlay);
     document.querySelectorAll('.icon-btn[data-pill]').forEach(function (b) { b.classList.toggle('on', !!S.pills[b.getAttribute('data-pill')]); });
     $('pill-duel').classList.toggle('open', S.pills.duel);
@@ -623,12 +703,14 @@
     if (S.overlay && S.pills.duel) renderDuel();
     if (S.overlay && S.pills.pressure) renderPressure();
     if (S.overlay && S.pills.team && S.team) renderTeam();
-    renderSlots(); renderPressureButton();
+    renderSlots(); renderPressureButton(); renderOnAir();
     renderChrome();
     if (!dragged) placeOverlayDefault();
+    postState();
   }
   function hideAll() {
-    S.overlay = false; S.pills.duel = false; S.pills.pressure = false; S.pills.team = false; S.team = null;
+    // the panic button also pulls whatever is on the stream
+    S.overlay = false; S.pills.duel = false; S.pills.pressure = false; S.pills.team = false; S.team = null; S.pushed = null;
     renderChips(); renderPicker(); renderOverlay(); draw();
   }
   function showOverlay() { S.overlay = true; renderOverlay(); draw(); }
@@ -658,7 +740,7 @@
 
   // ---------- canvas click: pick a player ----------
   cv.addEventListener('click', function (e) {
-    if (!S.overlay || S.bg === 'video') return;
+    if (VIEWER || !S.overlay || S.bg === 'video') return;
     var play = plays[S.i], best = null, bd = 1e9;
     play.players.forEach(function (p) {
       var xy = lerpXY(p.xy, S.frame), d = Math.hypot(X(xy[0]) - e.clientX, Y(xy[1]) - e.clientY);
@@ -693,6 +775,11 @@
     var ph = phase();
     if (ph === lastPhase) return;
     var prev = lastPhase; lastPhase = ph;
+    // the pushed card comes off the stream the moment the next play goes live
+    if (ph === 'live' && S.pushed && !VIEWER) {
+      S.pushed = null; S.clearedAt = performance.now();
+      setTimeout(renderOnAir, CLEARED_NOTE_MS + 50);
+    }
     // at the snap, pills the streamer opened more than PILL_STALE_MS ago fold away while the replay plays
     if (prev === 'pre' && ph === 'live' && S.playing) {
       var now = performance.now();
@@ -706,7 +793,19 @@
   $('btnPrev').onclick = function () { gotoPlay(S.i - 1); };
   $('btnNext').onclick = function () { gotoPlay(S.i + 1); };
   $('btnPlay').onclick = togglePlay;
+  // Next phase: PRE-SNAP -> LIVE -> AFTER-PLAY by hand, paused. In Broadcast it is the only way to reveal the result.
+  function nextPhase() {
+    var p = plays[S.i], ph = phase();
+    S.playing = false;
+    if (ph === 'pre') { S.frame = p.snapFrame; onPhase(); }
+    else if (ph === 'live') enterAfter();
+    renderChrome(); renderOverlay(); renderTick(); draw();
+  }
+  var nextBtn = el('button', null, 'Next phase'); nextBtn.id = 'nextPhase'; nextBtn.title = 'Next phase: pre-snap → live → after the play (N)';
+  $('controls').insertBefore(nextBtn, $('tClock'));
+  nextBtn.onclick = nextPhase;
 
+  var lastPost = 0, lastReady = null;
   function loop(ts) {
     var dt = S.last ? Math.min(ts - S.last, 200) : 0; S.last = ts;
     var play = plays[S.i], end = lastFrame(play);
@@ -723,15 +822,20 @@
       }
       draw(); renderTick();
       onPhase();
+      var rd = duelReady();
+      if (rd !== lastReady) { lastReady = rd; renderOverlay(); }
+      if (ts - lastPost >= 100) { lastPost = ts; postState(); }
     }
     requestAnimationFrame(loop);
   }
 
   // ---------- keyboard ----------
   document.addEventListener('keydown', function (e) {
+    if (VIEWER) return;
     var k = e.key, inForm = /^(SELECT|INPUT|TEXTAREA)$/.test(e.target.tagName);
     if (k === 'Tab') { e.preventDefault(); if (inForm) e.target.blur(); if (S.overlay) { S.overlay = false; renderOverlay(); draw(); } else showOverlay(); return; }
     if (k === 'Escape' || ((k === 'h' || k === 'H') && !inForm)) { e.preventDefault(); if (inForm) e.target.blur(); hideAll(); return; }
+    if (!inForm && (k === 'n' || k === 'N')) { e.preventDefault(); nextPhase(); return; }
     if (inForm || S.bg === 'video') return;
     if (k === 'ArrowRight') { e.preventDefault(); gotoPlay(S.i + 1); }
     else if (k === 'ArrowLeft') { e.preventDefault(); gotoPlay(S.i - 1); }
@@ -762,8 +866,9 @@
     S.bg = mode;
     var box = $('video');
     if (mode === 'video') {
+      // the clip starts before the snap: the result is revealed only with Next phase (N)
       gotoPlay(idx);
-      S.playing = false; enterAfter();
+      S.playing = false; renderOverlay(); renderTick();
       if (!box.firstChild) {
         var f = document.createElement('iframe');
         f.src = BROADCAST.src; f.title = 'Broadcast clip';
@@ -810,9 +915,26 @@
     else { S.team = null; S.pills.team = false; }
     S.overlay = true; lastPhase = phase();
     renderChips(); renderPicker(); renderChrome(); renderOverlay(); renderTick(); draw();
-    if (hash.bg === 'video') setBg('video');
+    if (hash.bg === 'video') { setBg('video'); if (hash.phase === 'after') enterAfter(); }
   }
-  applyHash();
-  window.addEventListener('hashchange', applyHash);
+  var SYNC_NOTICE = 'Stream sync needs a local server: <code>python3 -m http.server 8000 -d overlay</code>, then open <code>http://localhost:8000</code>';
+  if (VIEWER) {
+    ['overlay', 'controls', 'hint'].forEach(function (id) { if ($(id)) $(id).style.display = 'none'; });
+    // #demo=push&play=67&phase=after renders the suggested pair's card from the hash alone (for screenshots)
+    var vh = {};
+    location.hash.replace(/^#/, '').split('&').forEach(function (kv) { var a = kv.split('='); if (a[0]) vh[a[0]] = decodeURIComponent(a[1] || ''); });
+    if (vh.play) gotoPlay(parseInt(vh.play, 10) - 1);
+    if (vh.phase === 'after') { S.after = true; S.frame = lastFrame(plays[S.i]); }
+    if (vh.demo === 'push' && hl) S.pushed = { kind: 'duel', rusherId: hl[0], blockerId: hl[1] };
+    S.playing = false;
+    renderOverlay(); renderTick(); draw();
+    // the demo hash is a fixed screenshot: it does not follow a controller
+    if (chan && vh.demo !== 'push') { chan.onmessage = function (e) { applyRemote(e.data); }; chan.postMessage({ type: 'hello' }); }
+  } else {
+    applyHash();
+    window.addEventListener('hashchange', applyHash);
+    if (chan) chan.onmessage = function (e) { if (e.data && e.data.type === 'hello') postState(); };
+  }
+  if (location.protocol === 'file:') notice(SYNC_NOTICE);
   requestAnimationFrame(loop);
 })();

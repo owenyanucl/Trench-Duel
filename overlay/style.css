@@ -11,6 +11,9 @@
   --win: #ff8a3d;
   --hold: #4fc3ff;
   --fade: 200ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --safe-x: max(12px, 5vw);
+  --safe-y: max(12px, 5vh);
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 * { box-sizing: border-box; font-variant-numeric: tabular-nums; }
@@ -71,7 +74,7 @@ button, select { font: inherit; color: inherit; }
 .duel-grid > div:first-child { min-width: 0; overflow: hidden; }
 .duel-grid .dots { margin: 2px 0 0; justify-content: flex-start; max-width: 250px; gap: 2px; flex-wrap: nowrap; overflow: hidden; }
 .duel-grid .oneliner { margin: 0; }
-.pill { display: none; opacity: 0; transition: opacity var(--fade) ease, display var(--fade) allow-discrete; background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--line); border-radius: 14px; padding: 6px 10px 7px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3); max-height: var(--pill-max, 128px); overflow: hidden; }
+.pill { display: none; opacity: 0; transition: opacity var(--fade) var(--ease-out), display var(--fade) allow-discrete; background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); border: 1px solid var(--line); border-radius: 14px; padding: 6px 10px 7px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3); max-height: var(--pill-max, 128px); overflow: hidden; }
 .pill.open { display: block; opacity: 1; }
 @starting-style { .pill.open { opacity: 0; } }
 /* hide all is instant: nothing inside a hidden overlay transitions */
@@ -104,7 +107,7 @@ button, select { font: inherit; color: inherit; }
 .ctx b { color: var(--text); font-weight: 700; }
 .muted { color: var(--dim); font-size: 11px; }
 
-.pr-top { font-size: 12px; font-weight: 700; margin-bottom: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pr-top { font-size: 12px; font-weight: 700; margin-bottom: 0; line-height: 1.25; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .pr-top .r { color: var(--win); }
 .pr-sub { font-size: 10.5px; color: var(--dim); margin-bottom: 5px; }
 .pr-sub b { color: var(--text); }
@@ -207,5 +210,70 @@ body.hint-off .hint { visibility: hidden; }
   .slot { max-width: 150px; padding: 2px 6px; }
   .icon-btn { padding: 2px 6px; }
   .seg button { padding: 2px 6px; }
+  #bar .on-air { font-size: 0; gap: 0; padding: 3px 5px; }
 }
-@media (max-width: 1500px) { .brand, .suggest span { display: none; } }
+@media (max-width: 1500px) {
+  .brand, .icon-btn[data-pill=duel] span, .icon-btn[data-pill=team] span { display: none; }
+  #bar { gap: 3px; }
+  .suggest span { letter-spacing: 0.05em; }
+  #picker { max-width: 84px; }
+  .slot { max-width: 110px; }
+  .seg button { padding: 2px 5px; }
+  .icon-btn { padding: 2px 5px; }
+}
+/* the situation always shows in full */
+.slots .slot-sit { max-width: none; }
+
+/* ---------- controller: push to viewers, on-air indicator ---------- */
+/* the push button sits in the duel pill's head: same line height as the other head buttons, so the pill does not grow */
+.push-btn, .pill-head .push-btn { flex: none; background: var(--accent); color: #12141b; border: 0; border-radius: 999px; padding: 1px 8px; font-size: 9px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; }
+.push-btn:hover, .pill-head .push-btn:hover { background: #fff; color: #12141b; }
+.push-btn.on, .pill-head .push-btn.on { background: rgba(255, 138, 61, 0.18); box-shadow: inset 0 0 0 1px var(--win); color: var(--win); }
+.on-air { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 7px; border: 1px solid rgba(255, 138, 61, 0.55); border-radius: 999px; font-size: 9px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--win); white-space: nowrap; }
+.on-air::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--win); }
+.on-air:empty::after { content: "On air"; }
+.on-air[hidden], .push-btn[hidden] { display: none; }
+
+/* ---------- press feedback and focus (controller) ---------- */
+#bar button, #controls button, .pill-head button { transition: transform 160ms var(--ease-out), background-color 160ms ease; }
+#bar button:active, #controls button:active, .pill-head button:active { transform: scale(0.97); }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- viewer: only the broadcast lower-third, the scorebug and the permanent label ---------- */
+body.viewer #overlay, body.viewer #controls, body.viewer #nextPhase, body.viewer #hint, body.viewer #solidBtn, body.viewer #pushDuel, body.viewer #onAir { display: none !important; }
+body.viewer #scorebug { left: var(--safe-x); bottom: var(--safe-y); }
+body.viewer .replay-label { right: var(--safe-x); bottom: var(--safe-y); }
+/* a notice never sits on the lower-third */
+body.viewer .notice { top: var(--safe-y); bottom: auto; }
+
+/* lower-left, above the scorebug, inside the safe margin; narrow enough to stay off the middle of the field */
+.vcard { position: fixed; z-index: 60; left: var(--safe-x); bottom: calc(var(--safe-y) + 44px); width: min(420px, 34vw); min-width: 300px;
+  padding: 12px 16px 10px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.16); border-left: 4px solid var(--win);
+  background: rgba(10, 12, 18, 0.74); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
+  color: var(--text); opacity: 1; transform: none; transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out); }
+/* enters with a short fade and rise; leaves instantly when pulled (hidden or emptied: no exit animation) */
+@starting-style { .vcard { opacity: 0; transform: translateY(8px); } }
+.vcard[hidden], .vcard:empty { display: none; }
+body.solid .vcard { background: var(--solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
+.vc-head { display: flex; align-items: baseline; gap: 8px; font-size: 15px; font-weight: 800; line-height: 1.2; white-space: nowrap; overflow: hidden; }
+.vc-head .vc-r, .vc-head .vc-b { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.vc-r { color: var(--win); }
+.vc-b { color: var(--hold); }
+.vc-vs { flex: none; font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
+.vc-tally { display: flex; align-items: baseline; gap: 8px; margin: 4px 0 6px; line-height: 1; font-size: 26px; font-weight: 700; color: var(--dim); }
+.vc-tally .vc-n:first-child { color: var(--win); }
+.vc-tally .vc-n:nth-child(2) { color: var(--hold); }
+.vc-n { font-size: 36px; font-weight: 800; letter-spacing: -0.01em; }
+.vc-reps { font-size: 12px; font-weight: 600; color: var(--dim); margin-left: 2px; }
+.vc-line { font-size: 18px; font-weight: 600; line-height: 1.35; color: var(--text); text-wrap: pretty; }
+.vc-dots { display: flex; flex-wrap: wrap; gap: 3px; margin: 8px 0 6px; }
+.vc-dots .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--hold); opacity: 0.9; }
+.vc-dots .dot.win { background: var(--win); }
+.vc-dots .dot.hold { background: var(--hold); }
+.vc-src { font-size: 10px; letter-spacing: 0.04em; color: var(--dim); line-height: 1.3; }
+@media (max-width: 760px) { .vcard { width: calc(100vw - 2 * var(--safe-x)); min-width: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  @starting-style { .vcard { transform: none; } }
+  #bar button:active, #controls button:active, .pill-head button:active { transform: none; }
+}

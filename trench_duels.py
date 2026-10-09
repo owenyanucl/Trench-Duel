@@ -289,7 +289,11 @@ def personnel_code(s):
 
 
 def pressure_events(pff_play, jerseys, play):
-    """One entry per defender credited with a sack, hit or hurry (his most severe), sacks first, with the blocker charged."""
+    """One entry per defender credited with a sack, hit or hurry (his most severe), sacks first.
+
+    The blocker is the one PFF charged with that type while blocking this rusher, else the only charged blocker
+    of that type who was not blocking another credited rusher, else none; chargedElsewhere marks a charge left unnamed."""
+    credited = set(pff_play.loc[(pff_play[[c for _, c, _ in PRESSURE_TYPES]] == 1).any(axis=1), "nflId"])
     events = []
     for kind, credit, allowed in PRESSURE_TYPES:
         charged = pff_play[pff_play[allowed] == 1]
@@ -297,13 +301,15 @@ def pressure_events(pff_play, jerseys, play):
             if any(e["rusherId"] == int(r.nflId) for e in events):
                 continue
             match = charged[charged["pff_nflIdBlockedPlayer"] == r.nflId]
-            blocker = match.iloc[0] if len(match) else charged.iloc[0] if len(charged) else None
+            free = charged[~charged["pff_nflIdBlockedPlayer"].isin(credited - {r.nflId})]
+            blocker = match.iloc[0] if len(match) else free.iloc[0] if len(free) == 1 else None
             sec = play["timeToSack" if kind == "sack" else "timeToThrow"]
             events.append({"type": kind, "rusherId": int(r.nflId),
                            "jersey": int(jerseys.loc[r.nflId, "jerseyNumber"]) if r.nflId in jerseys.index else None,
                            "rusherPos": None if pd.isna(r.pff_positionLinedUp) else r.pff_positionLinedUp,
                            "blockerId": None if blocker is None else int(blocker["nflId"]),
                            "blockerPos": None if blocker is None or pd.isna(blocker["pff_positionLinedUp"]) else blocker["pff_positionLinedUp"],
+                           "chargedElsewhere": blocker is None and len(charged) > 0,
                            "seconds": None if pd.isna(sec) else round(float(sec), 1)})
     return events
 
@@ -375,7 +381,7 @@ def demo_game(game_id, plays, players, games, pff, reps, rusher_plays, season, t
     payload = {
         "meta": {"gameId": int(game_id), "week": int(g["week"]), "date": g["gameDate"], "home": g["homeTeamAbbr"],
                  "away": g["visitorTeamAbbr"],
-                 "label": f"Replay of 2021 Week {int(g['week'])} {g['visitorTeamAbbr']} @ {g['homeTeamAbbr']} from NFL tracking data — not live",
+                 "label": f"SIMULATED LIVE · {g['season']} DATA · {g['visitorTeamAbbr']} @ {g['homeTeamAbbr']} Wk {int(g['week'])}",
                  "toDateWeeks": sorted(int(x) for x in games.loc[games["week"] < week, "week"].unique())},
         "players": player_map,
         "season": season_entries(season, on_field),
