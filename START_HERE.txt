@@ -1,0 +1,5 @@
+Build the NFL creator-controlled replay overlay described in BUILDER_BRIEF.md. Read that file first and use it as the implementation scope and acceptance criteria.
+
+Use the attached real-play JSON files and Python exporter. Reuse the existing project stack where available. Implement the working private controller and separate audience output, then test the two verified demo stories. The 45-question research catalogue is background, not a request to implement all 45 features.
+
+Keep private preview changes separate from published output. Preserve the data limits and metric definitions in the brief. Deliver runnable code, setup instructions, screenshots and a short submission summary. Proceed with routine implementation decisions instead of stopping at a plan.
