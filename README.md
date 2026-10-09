@@ -28,11 +28,7 @@
 
 ![Team pill: Cleveland's tendencies before tonight](output/step_team.png)
 
-**7. Who wins their reps most often.** Pass rushers ranked by reps won beyond what's expected for where they line up.
-
-![Top rushers over expectation](output/top_rushers.png)
-
-**8. Where a player is lining up tonight vs before.** A coverage heat map for a future in-game form card.
+**7. Where a player is lining up tonight vs before.** A coverage heat map for a future in-game form card.
 
 ![John Johnson III coverage heat map](output/heatmap_johnson_2021100305.png)
 
